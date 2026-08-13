@@ -6,21 +6,21 @@ import "../pages_css/login.css";
 type AuthMode = "login" | "signup";
 
 type AuthPageProps = {
-  initialMode?: AuthMode;
-  onAuthSuccess?: () => void;
+  readonly initialMode?: AuthMode;
+  readonly onAuthSuccess?: () => void;
 };
 
 type PasswordFieldProps = {
-  id: string;
-  label: string;
-  placeholder: string;
-  value: string;
-  onChange: (value: string) => void;
-  autoComplete: string;
-  showPassword: boolean;
-  onToggleShow: () => void;
-  forgot?: boolean;
-  onForgot?: () => void;
+  readonly id: string;
+  readonly label: string;
+  readonly placeholder: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly autoComplete: string;
+  readonly showPassword: boolean;
+  readonly onToggleShow: () => void;
+  readonly forgot?: boolean;
+  readonly onForgot?: () => void;
 };
 
 function PasswordField({
@@ -80,6 +80,7 @@ function PasswordField({
 
 export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthPageProps) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [Name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -124,15 +125,48 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
     onAuthSuccess?.();
   };
 
-  const apiRequest = async (endpoint: "/login" | "/signup", payload: Record<string, unknown>) => {
-    const response = await fetch(`${backendBaseUrl}${endpoint}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+  const apiRequest = async (
+    endpoint: string,
+    method: "GET" | "POST" = "POST",
+    payload: Record<string, unknown> = {}
+  ) => {
+    const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    const url = `${backendBaseUrl}${normalizedEndpoint}`;
 
+    const requestOptions: RequestInit = {
+      method,
+      headers: {
+        Accept: "application/json",
+      },
+    };
+
+    if (method === "POST") {
+      requestOptions.headers = {
+        ...requestOptions.headers,
+        "Content-Type": "application/json",
+      };
+      requestOptions.body = JSON.stringify(payload);
+    } else {
+      const queryUrl = new URL(url);
+
+      Object.entries(payload).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          queryUrl.searchParams.set(key, String(value));
+        }
+      });
+
+      return fetch(queryUrl.toString(), requestOptions).then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(data.detail || data.message || "Authentication request failed.");
+        }
+
+        return data;
+      });
+    }
+
+    const response = await fetch(url, requestOptions);
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
@@ -142,7 +176,7 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
     return data;
   };
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
 
@@ -150,7 +184,10 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
       setError("Please enter your email.");
       return;
     }
-
+    if(!isLogin && !Name.trim()) {
+      setError("Please enter your name.");
+      return;
+    }
     if (!password) {
       setError(isLogin ? "Please enter your password." : "Please enter a password.");
       return;
@@ -165,15 +202,15 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
       setError("Passwords do not match.");
       return;
     }
+    if(email) {
 
     setLoading(true);
 
     try {
-      const endpoint = isLogin ? "/login" : "/signup";
-      const response = await apiRequest(endpoint, {
+      const endpoint = isLogin ? "/auth/login" : "/auth/register";
+      const response = await apiRequest(endpoint, "POST", {
         email,
         password,
-        provider: "email",
       });
 
       const token = response.token || response.access_token || response.auth_token;
@@ -194,13 +231,16 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
   const googleLogin = useGoogleLogin({
     onSuccess: async (tokenResponse) => {
       try {
-        const endpoint = isLogin ? "/login" : "/signup";
         console.log("Google access token:", tokenResponse.access_token);
 
-        const result = await apiRequest(endpoint, {
-          provider: "google",
-          token: tokenResponse.access_token,
-        });
+        const result = await apiRequest(
+          "/auth/google",
+          "GET",
+          {
+            provider: "google",
+            token: tokenResponse.access_token,
+          }
+        );
 
         const token = result.token || result.access_token || result.auth_token;
 
@@ -238,14 +278,17 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
         window.prompt("Choose a demo Google email:", demoEmails[0]) || demoEmails[0];
 
       try {
-        const endpoint = isLogin ? "/login" : "/signup";
         console.log("Google access token:", `demo-google-token:${selectedEmail}`);
 
-        const result = await apiRequest(endpoint, {
-          provider: "google",
-          token: `demo-google-token:${selectedEmail}`,
-          email: selectedEmail,
-        });
+        const result = await apiRequest(
+          "/auth/google",
+          "GET",
+          {
+            provider: "google",
+            token: `demo-google-token:${selectedEmail}`,
+            email: selectedEmail,
+          }
+        );
 
         const token = result.token || result.access_token || result.auth_token;
 
@@ -346,6 +389,19 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
           </div>
 
           <form onSubmit={handleSubmit} className="login-form">
+            {/* {!isLogin && (
+              <div className="field">
+                <label htmlFor="name">Name</label>
+                <input
+                  id="name"
+                  type="text"
+                  placeholder="Enter your name"
+                  value={Name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="name"
+                />
+              </div>
+            )} */}
             <div className="field">
               <label htmlFor="email">Email</label>
               <input
