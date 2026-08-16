@@ -1,11 +1,5 @@
 from fastapi import FastAPI
+from api.routers import auth
 
-app = FastAPI()
-
-@app.get("/")
-def root():
-    return {"message":"Backend Running"}
-
-@app.get("/health")
-def health():
-    return {"status":"OK"}
+app = FastAPI(title="Paper Trading Platform")
+app.include_router(auth.router)
