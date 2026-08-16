@@ -1,9 +1,24 @@
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import LoginPage from "./pages/login.tsx";
 import SignupPage from "./pages/signup.tsx";
 import DashboardPage from "./pages/dashboard.tsx";
 import NotFoundPage from "./pages/not-found.tsx";
+import AuthCallbackPage from "./pages/AuthCallbackPage.tsx";
+import GoogleCallbackPage from "./pages/GoogleCallbackPage.tsx";
+import ForgotPasswordPage from "./pages/ForgotPasswordPage.tsx";
+import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
+
+function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean }) {
+  const location = useLocation();
+  const hasCode = new URLSearchParams(location.search).get("code");
+
+  if (hasCode) {
+    return <GoogleCallbackPage />;
+  }
+
+  return isAuthenticated ? <DashboardPage /> : <Navigate to="/login" replace />;
+}
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -51,10 +66,12 @@ function App() {
           )
         }
       />
-      <Route
-        path="/dashboard"
-        element={isAuthenticated ? <DashboardPage /> : <Navigate to="/login" replace />}
-      />
+      <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
+      <Route path="/google/callback" element={<GoogleCallbackPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/dashboard" element={<DashboardGate isAuthenticated={isAuthenticated} />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

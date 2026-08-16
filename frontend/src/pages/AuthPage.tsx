@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useGoogleLogin } from "@react-oauth/google";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import "../pages_css/login.css";
 
@@ -78,9 +78,13 @@ function PasswordField({
   );
 }
 
-export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthPageProps) {
+export default function AuthPage({
+  initialMode = "login",
+  onAuthSuccess,
+}: Readonly<AuthPageProps>) {
+  const navigate = useNavigate();
   const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [Name, setName] = useState("");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -88,8 +92,10 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState<{ text: string; type: "success" | "error" } | null>(null);
+  const noticeTimeoutRef = useRef<number | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const savedTheme = localStorage.getItem("tradenova-theme");
+    const savedTheme = localStorage.getItem("Tradonova-theme");
 
     if (savedTheme === "light" || savedTheme === "dark") {
       return savedTheme;
@@ -101,28 +107,96 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
   });
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("tradenova-theme", theme);
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("Tradonova-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    const savedNotice = window.sessionStorage.getItem("auth_notice");
+
+    if (!savedNotice) {
+      return;
+    }
+
+    try {
+      const parsedNotice = JSON.parse(savedNotice) as { text?: string; type?: "success" | "error" };
+
+      if (parsedNotice.text) {
+        setNotice({
+          text: parsedNotice.text,
+          type: parsedNotice.type === "error" ? "error" : "success",
+        });
+
+        window.setTimeout(() => {
+          setNotice(null);
+          window.sessionStorage.removeItem("auth_notice");
+        }, 3000);
+      }
+    } catch {
+      window.sessionStorage.removeItem("auth_notice");
+    }
+  }, []);
+
+  const normalizeNoticeText = (text: string, type: "success" | "error" = "success") => {
+    const value = String(text ?? "").trim();
+
+    if (!value) {
+      return type === "success" ? "Action completed successfully." : "Something went wrong. Please try again.";
+    }
+
+    const cleaned = value
+      .replace(/auth_code\s*[:=][^,\n]+/gi, "")
+      .replace(/code_verifier\s*[:=][^,\n]+/gi, "")
+      .replace(/\s{2,}/g, " ")
+      .replace(/[,\s]+$/g, "")
+      .trim();
+
+    if (!cleaned || /auth_code|code_verifier/i.test(value)) {
+      return type === "success" ? "Google login successful." : "Authentication failed. Please try again.";
+    }
+
+    return cleaned;
+  };
+
+  const showNotice = (text: string, type: "success" | "error" = "success") => {
+    const nextText = normalizeNoticeText(text, type);
+    setNotice({ text: nextText, type });
+    window.sessionStorage.setItem("auth_notice", JSON.stringify({ text: nextText, type }));
+
+    if (noticeTimeoutRef.current) {
+      window.clearTimeout(noticeTimeoutRef.current);
+    }
+
+    noticeTimeoutRef.current = window.setTimeout(() => {
+      setNotice(null);
+      window.sessionStorage.removeItem("auth_notice");
+    }, 3000);
+  };
 
   const isLogin = mode === "login";
 
-  const backendBaseUrl = (
+  const backendBaseUrl = String(
     import.meta.env.VITE_BACKEND_URL ||
     import.meta.env.BACKEND_URL ||
     "http://localhost:8000"
-  ).replace(/\/+$/, "");
-
-  const googleClientId = (
-    import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-    import.meta.env.GOOGLE_CLIENT_ID ||
-    ""
-  ).trim();
+  ).replace(/\/$/, "");
 
   const saveAuthToken = (token: string) => {
     localStorage.setItem("auth_token", token);
     window.dispatchEvent(new CustomEvent("auth-success"));
     onAuthSuccess?.();
+  };
+
+  const serializeQueryValue = (value: unknown): string => {
+    if (Array.isArray(value)) {
+      return value.join(",");
+    }
+
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return String(value);
+    }
+
+    return JSON.stringify(value);
   };
 
   const apiRequest = async (
@@ -150,9 +224,11 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
       const queryUrl = new URL(url);
 
       Object.entries(payload).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          queryUrl.searchParams.set(key, String(value));
+        if (value === undefined || value === null) {
+          return;
         }
+
+        queryUrl.searchParams.set(key, serializeQueryValue(value));
       });
 
       return fetch(queryUrl.toString(), requestOptions).then(async (response) => {
@@ -176,39 +252,46 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
     return data;
   };
 
+  const validateForm = (): string => {
+    if (!email.trim()) {
+      return "Please enter your email.";
+    }
+
+    // if (!isLogin && !name.trim()) {
+    //   return "Please enter your name.";
+    // }
+
+    if (!password) {
+      return isLogin ? "Please enter your password." : "Please enter a password.";
+    }
+
+    if (!isLogin && !confirmPassword) {
+      return "Please confirm your password.";
+    }
+
+    if (!isLogin && password !== confirmPassword) {
+      return "Passwords do not match.";
+    }
+
+    return "";
+  };
+
   const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
 
-    if (!email.trim()) {
-      setError("Please enter your email.");
+    const validationError = validateForm();
+    if (validationError) {
+      setError(validationError);
       return;
     }
-    if(!isLogin && !Name.trim()) {
-      setError("Please enter your name.");
-      return;
-    }
-    if (!password) {
-      setError(isLogin ? "Please enter your password." : "Please enter a password.");
-      return;
-    }
-
-    if (!isLogin && !confirmPassword) {
-      setError("Please confirm your password.");
-      return;
-    }
-
-    if (!isLogin && password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-    if(email) {
 
     setLoading(true);
 
     try {
       const endpoint = isLogin ? "/auth/login" : "/auth/register";
       const response = await apiRequest(endpoint, "POST", {
+        ...(isLogin ? {} : { name }),
         email,
         password,
       });
@@ -217,6 +300,11 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
 
       if (token) {
         saveAuthToken(token);
+      }
+
+      if (response.message) {
+        setError("");
+        showNotice(response.message, "success");
       }
 
       console.log(isLogin ? "Login:" : "Sign up:", response);
@@ -228,85 +316,41 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
     }
   };
 
-  const googleLogin = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      try {
-        console.log("Google access token:", tokenResponse.access_token);
-
-        const result = await apiRequest(
-          "/auth/google",
-          "GET",
-          {
-            provider: "google",
-            token: tokenResponse.access_token,
-          }
-        );
-
-        const token = result.token || result.access_token || result.auth_token;
-
-        if (token) {
-          saveAuthToken(token);
-        }
-
-        console.log(isLogin ? "Google login:" : "Google signup:", result);
-      } catch (requestError) {
-        const message = requestError instanceof Error ? requestError.message : "Google authentication failed.";
-        setError(message);
-      } finally {
-        setLoading(false);
-      }
-    },
-    onError: () => {
-      setLoading(false);
-      setError("Google popup was blocked or unavailable. Please try again.");
-    },
-    flow: "implicit",
-  });
-
   const handleGoogleAuth = async () => {
     setLoading(true);
     setError("");
 
-    if (!googleClientId) {
-      const demoEmails = [
-        "demo.user@gmail.com",
-        "tradenova.owner@gmail.com",
-        "papertrader@example.com",
-      ];
+    try {
+      const endpoint = isLogin ? "/auth/google/login" : "/auth/google/signup";
+      const result = await apiRequest(endpoint, "GET", {
+        provider: "google",
+      });
 
-      const selectedEmail =
-        window.prompt("Choose a demo Google email:", demoEmails[0]) || demoEmails[0];
+      const redirectUrl =
+        result?.url ||
+        result?.redirectUrl ||
+        result?.auth_url ||
+        result?.result?.url ||
+        result?.data?.url;
 
-      try {
-        console.log("Google access token:", `demo-google-token:${selectedEmail}`);
-
-        const result = await apiRequest(
-          "/auth/google",
-          "GET",
-          {
-            provider: "google",
-            token: `demo-google-token:${selectedEmail}`,
-            email: selectedEmail,
-          }
-        );
-
-        const token = result.token || result.access_token || result.auth_token;
-
-        if (token) {
-          saveAuthToken(token);
-        }
-
-        console.log(isLogin ? "Google login:" : "Google signup:", result);
-        setLoading(false);
-      } catch (requestError) {
-        const message = requestError instanceof Error ? requestError.message : "Google authentication failed.";
-        setError(message);
-        setLoading(false);
+      if (redirectUrl) {
+        window.location.href = redirectUrl;
+        return;
       }
-      return;
-    }
 
-    googleLogin();
+      const token = result?.token || result?.access_token || result?.auth_token;
+      if (token) {
+        saveAuthToken(token);
+        return;
+      }
+
+      throw new Error("Google authentication URL was not returned by the backend.");
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Google authentication failed.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -323,7 +367,7 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
                   ? "/logos/Tradenova_Dark.png"
                   : "/logos/Tradenova_Light.png"
               }
-              alt="TradeNova"
+              alt="Tradonova"
               className="logo"
             />
           </div>
@@ -352,8 +396,8 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
               className="back-button"
               onClick={() => window.history.back()}
             >
-              <span>←</span>
-              Back
+              <span aria-hidden="true">←</span>
+              {" "}Back
             </button>
 
             <button
@@ -370,16 +414,16 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
             <img
               src={
                 theme === "dark"
-                  ? "/logos/Tradenova_Dark.png"
-                  : "/logos/Tradenova_Light.png"
+                  ? "/logos/Tradonova_Dark.png"
+                  : "/logos/Tradonova_Light.png"
               }
-              alt="TradeNova"
+              alt="Tradonova"
               className="logo"
             />
           </div>
 
           <div className="login-heading">
-            <span className="welcome">{isLogin ? "WELCOME BACK" : "JOIN TRADENOVA"}</span>
+            <span className="welcome">{isLogin ? "WELCOME BACK" : "JOIN Tradonova"}</span>
             <h2>{isLogin ? "Login to your account" : "Create your account"}</h2>
             <p>
               {isLogin
@@ -389,6 +433,14 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
           </div>
 
           <form onSubmit={handleSubmit} className="login-form">
+            {notice && (
+              <div className="toast-overlay">
+                <div className={`toast-message ${notice.type}`} role="status" aria-live="polite">
+                  {notice.text}
+                </div>
+              </div>
+            )}
+
             {/* {!isLogin && (
               <div className="field">
                 <label htmlFor="name">Name</label>
@@ -396,7 +448,7 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
                   id="name"
                   type="text"
                   placeholder="Enter your name"
-                  value={Name}
+                  value={name}
                   onChange={(e) => setName(e.target.value)}
                   autoComplete="name"
                 />
@@ -424,7 +476,7 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
               showPassword={showPassword}
               onToggleShow={() => setShowPassword((prev) => !prev)}
               forgot={isLogin}
-              onForgot={() => console.log("Forgot password")}
+              onForgot={() => navigate("/forgot-password")}
             />
 
             {!isLogin && (
@@ -448,10 +500,8 @@ export default function AuthPage({ initialMode = "login", onAuthSuccess }: AuthP
                   <span className="spinner" />
                   {isLogin ? "Logging in..." : "Creating account..."}
                 </span>
-              ) : isLogin ? (
-                "Login"
               ) : (
-                "Create account"
+                <>{isLogin ? "Login" : "Create account"}</>
               )}
             </button>
 
