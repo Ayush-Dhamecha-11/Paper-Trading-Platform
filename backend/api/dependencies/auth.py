@@ -1,28 +1,25 @@
 import os
 import jwt
-from fastapi import Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from fastapi import Cookie, HTTPException
 
 
 JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
-security = HTTPBearer()
 
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    token = credentials.credentials
-
+def get_current_user(access_token: str | None = Cookie(default=None)):
+    
+    # Check JWT secret configuration
     if not JWT_SECRET:
-        raise HTTPException(
-            status_code=500,
-            detail="SUPABASE_JWT_SECRET is not configured"
-        )
+        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET is not configured")
+
+    # Check whether user has an authentication cookie
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
         payload = jwt.decode(
-            token,
+            access_token,
             JWT_SECRET,
             algorithms=["HS256"],
             audience="authenticated"
@@ -34,13 +31,7 @@ def get_current_user(
         }
 
     except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=401,
-            detail="Token has expired"
-        )
+        raise HTTPException(status_code=401, detail="Access token has expired")
 
     except jwt.PyJWTError:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid authentication token"
-        )
+        raise HTTPException(status_code=401, detail="Invalid authentication token")

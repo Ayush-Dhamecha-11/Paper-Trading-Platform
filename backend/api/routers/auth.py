@@ -1,15 +1,15 @@
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response, Cookie
+from fastapi.responses import RedirectResponse
 from db.supabase_client import supabase
 from api.schemas.auth import (
     RegisterRequest,
     LoginRequest,
     ForgotPasswordRequest,
-    SendOtpRequest,
-    VerifyOtpRequest,
     ResetPasswordRequest,
 )
 from api.dependencies.auth import get_current_user
+from utils.cookies import set_auth_cookies, clear_auth_cookies
 
 
 router = APIRouter(
@@ -26,7 +26,7 @@ def register(payload: RegisterRequest):
             "email": payload.email,
             "password": payload.password,
             "options": {
-                "email_redirect_to": "http://localhost:8000/login?verified=true"
+                "email_redirect_to": "http://127.0.0.1:5173/"
             }
         })
 
@@ -42,7 +42,7 @@ def register(payload: RegisterRequest):
 # LOGIN
 
 @router.post("/login")
-def login(payload: LoginRequest):
+def login(payload: LoginRequest, response: Response):
     try:
         res = supabase.auth.sign_in_with_password({
             "email": payload.email,
@@ -52,14 +52,17 @@ def login(payload: LoginRequest):
         if not res.session:
             raise HTTPException(status_code=401, detail="Login failed. No session created.")
 
+        set_auth_cookies(
+            response,
+            res.session.access_token,
+            res.session.refresh_token,
+        )
+
         return {
             "access_token": res.session.access_token,
             "refresh_token": res.session.refresh_token,
             "user": res.user
         }
-
-    except HTTPException:
-        raise
 
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -71,12 +74,11 @@ def login(payload: LoginRequest):
 def forgot_password(payload: ForgotPasswordRequest):
     try:
         supabase.auth.reset_password_for_email(
-            payload.email
+            payload.email,
+            { "redirect_to": "http://127.0.0.1:5173/reset-password"}
         )
 
-        return {
-            "message": "Password reset email sent"
-        }
+        return { "message": "Password reset email sent"}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -94,54 +96,15 @@ def reset_password(payload: ResetPasswordRequest):
 
         supabase.auth.update_user({"password": payload.new_password})
 
-        return { "message": "Password updated successfully" }
+        return { 
+            "message": "Password updated successfully", 
+            "access_token": payload.access_token,
+            "refresh_token": payload.refresh_token   
+            }
 
-    except Exception:
-        raise HTTPException(status_code=400, detail="Could not reset password")
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
-# SEND OTP
-
-@router.post("/send-otp")
-def send_otp(payload: SendOtpRequest):
-    try:
-        supabase.auth.sign_in_with_otp({"email": payload.email})
-
-        return {"message": "OTP sent to email"}
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-# VERIFY OTP
-
-@router.post("/verify-otp")
-def verify_otp(payload: VerifyOtpRequest):
-    try:
-        res = supabase.auth.verify_otp({
-            "email": payload.email,
-            "token": payload.otp,
-            "type": "email"
-        })
-
-        if not res.session:
-            raise HTTPException(status_code=400, detail="OTP verification failed")
-
-        return {
-            "access_token": res.session.access_token,
-            "refresh_token": res.session.refresh_token,
-            "user": res.user
-        }
-
-    except HTTPException:
-        raise
-
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-
 
 # GOOGLE OAUTH - LOGIN
 
@@ -165,6 +128,7 @@ def google_login():
 @router.get("/google/callback")
 def google_callback(code: str):
     try:
+
         res = supabase.auth.exchange_code_for_session({"auth_code": code})
 
         if not res.session:
@@ -173,23 +137,56 @@ def google_callback(code: str):
                 detail="Could not create session"
             )
 
+        frontend_url = "http://localhost:5173/auth/callback"
+
+        response = RedirectResponse(
+            url=frontend_url,
+            status_code=302,
+        )
+
+        set_auth_cookies(
+            response,
+            res.session.access_token,
+            res.session.refresh_token,
+        )
+
         return {
             "access_token": res.session.access_token,
             "refresh_token": res.session.refresh_token,
             "user": res.user
         }
 
-    except HTTPException:
-        raise
-
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
 
+@router.post("/refresh")
+def refresh_token(response: Response, refresh_token: str | None = Cookie(default=None)):
+    
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="No refresh token")
+
+    try:
+        res = supabase.auth.refresh_session(refresh_token)
+
+        if not res.session:
+            raise HTTPException(status_code=401, detail="Could not refresh session")
+
+        set_auth_cookies(
+            response,
+            res.session.access_token,
+            res.session.refresh_token,
+        )
+
+        return {"message": "Session refreshed"}
+
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 # LOGOUT
 
 @router.post("/logout")
-def logout(current_user=Depends(get_current_user)):
+def logout(response: Response):
     """
     Logout endpoint.
 
@@ -202,6 +199,7 @@ def logout(current_user=Depends(get_current_user)):
     The frontend should discard the access_token and
     refresh_token after receiving this response.
     """
+    clear_auth_cookies(response)
 
     return {
         "message": "Logged out successfully"

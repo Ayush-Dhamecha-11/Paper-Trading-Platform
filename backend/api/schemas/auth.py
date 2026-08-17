@@ -11,13 +11,6 @@ class LoginRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
-class SendOtpRequest(BaseModel):
-    email: EmailStr
-
-class VerifyOtpRequest(BaseModel):
-    email: EmailStr
-    otp: str
-
 class ResetPasswordRequest(BaseModel):
     access_token: str
     refresh_token: str
