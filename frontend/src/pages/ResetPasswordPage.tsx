@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { showAppAlert } from "../utils/alertConfig";
 import "../pages_css/login.css";
 
 const backendBaseUrl = String(
@@ -8,20 +9,54 @@ const backendBaseUrl = String(
     "http://localhost:8000"
 ).replace(/\/$/, "");
 
-export default function ResetPasswordPage() {
+export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSuccess?: () => void }) {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get("token") || "";
+  const resetTokens = (() => {
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+    if (!hash) {
+      return { accessToken: "", refreshToken: "" };
+    }
+
+    const params = new URLSearchParams(hash);
+    return {
+      accessToken: params.get("access_token") || "",
+      refreshToken: params.get("refresh_token") || "",
+    };
+  })();
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+  useEffect(() => {
+    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+    if (!hash) {
+      return;
+    }
+
+    const params = new URLSearchParams(hash);
+    const accessToken = params.get("access_token") || "";
+    const refreshToken = params.get("refresh_token") || "";
+
+    if (!accessToken && !refreshToken) {
+      return;
+    }
+
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.hash = "";
+    window.history.replaceState({}, "", cleanUrl.toString());
+  }, []);
+  const saveAuthToken = (token: string) => {
+    localStorage.setItem("auth_token", token);
+    window.dispatchEvent(new CustomEvent("auth-success"));
+    onAuthSuccess?.();
+  };
+
+  const handleSubmit = async (event: { preventDefault: () => void }) => {
     event.preventDefault();
     setMessage(null);
 
-    if (!token) {
+    if (!resetTokens.accessToken || !resetTokens.refreshToken) {
       setMessage({ text: "Reset token is missing. Please use the link from your email.", type: "error" });
       return;
     }
@@ -45,7 +80,11 @@ export default function ResetPasswordPage() {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({ token, password }),
+        body: JSON.stringify({
+          access_token: resetTokens.accessToken,
+          refresh_token: resetTokens.refreshToken,
+          new_password: password,
+        }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -56,16 +95,30 @@ export default function ResetPasswordPage() {
 
       const successText = data.message || "Password updated successfully.";
       setMessage({ text: successText, type: "success" });
+      const token = data.token || data.access_token || data.refresh_token;
+      saveAuthToken(token);
+
+      showAppAlert({
+        title: "Success",
+        text: successText,
+        type: "success",
+        timer: 2400,
+      });
 
       window.sessionStorage.setItem(
         "auth_notice",
         JSON.stringify({ text: successText, type: "success" })
       );
 
-      setTimeout(() => navigate("/login", { replace: true }), 1200);
+      setTimeout(() => navigate("/dashboard", { replace: true }), 1200);
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : "Unable to reset password.";
       setMessage({ text: errMessage, type: "error" });
+      showAppAlert({
+        title: "Error",
+        text: errMessage,
+        type: "error",
+      });
     } finally {
       setLoading(false);
     }

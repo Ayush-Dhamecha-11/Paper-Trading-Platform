@@ -8,6 +8,7 @@ import AuthCallbackPage from "./pages/AuthCallbackPage.tsx";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage.tsx";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage.tsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
+import ProfilePage from "./pages/ProfilePage.tsx";
 
 function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean }) {
   const location = useLocation();
@@ -22,12 +23,12 @@ function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean 
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return Boolean(localStorage.getItem("auth_token"));
+    return Boolean(localStorage.getItem("auth_token") || localStorage.getItem("auth_session"));
   });
 
   useEffect(() => {
     const handleAuthSuccess = () => {
-      setIsAuthenticated(Boolean(localStorage.getItem("auth_token")));
+      setIsAuthenticated(Boolean(localStorage.getItem("auth_token") || localStorage.getItem("auth_session")));
     };
 
     window.addEventListener("auth-success", handleAuthSuccess);
@@ -71,6 +72,7 @@ function App() {
       <Route path="/google/callback" element={<GoogleCallbackPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/login" replace />} />
       <Route path="/dashboard" element={<DashboardGate isAuthenticated={isAuthenticated} />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>

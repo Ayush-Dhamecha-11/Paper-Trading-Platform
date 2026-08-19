@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { showAppAlert } from "../utils/alertConfig";
 import "../pages_css/login.css";
 
 const backendBaseUrl = String(
@@ -32,7 +33,7 @@ export default function ForgotPasswordPage() {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email:email }),
       });
 
       const data = await response.json().catch(() => ({}));
@@ -44,6 +45,13 @@ export default function ForgotPasswordPage() {
       const successText = data.message || "Password reset link sent to your email.";
       setMessage({ text: successText, type: "success" });
 
+      showAppAlert({
+        title: "Success",
+        text: successText,
+        type: "success",
+        timer: 2400,
+      });
+
       window.sessionStorage.setItem(
         "auth_notice",
         JSON.stringify({ text: successText, type: "success" })
@@ -53,6 +61,11 @@ export default function ForgotPasswordPage() {
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : "Unable to send reset link.";
       setMessage({ text: errMessage, type: "error" });
+      showAppAlert({
+        title: "Error",
+        text: errMessage,
+        type: "error",
+      });
     } finally {
       setLoading(false);
     }

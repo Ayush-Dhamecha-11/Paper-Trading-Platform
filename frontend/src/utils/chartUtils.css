@@ -1,0 +1,169 @@
+/* =========================================================
+   COMMON CHART SHELL
+   ========================================================= */
+
+.chartjs-shell {
+  position: relative;
+
+  width: 100%;
+  max-width: 100%;
+
+  min-width: 0;
+
+  overflow: visible;
+}
+
+
+/* =========================================================
+   LINE CHART
+   ========================================================= */
+
+.chartjs-line-shell {
+  height: 240px;
+
+  min-height: 240px;
+  min-width: 0;
+
+  overflow: visible;
+}
+
+
+/* =========================================================
+   DOUGHNUT CHART
+   ========================================================= */
+
+.chartjs-doughnut-shell {
+  position: relative;
+
+  /*
+   * Slightly larger than the previous 16rem size.
+   *
+   * This provides room for the hoverOffset.
+   */
+  width: min(18rem, 76vw);
+  height: min(18rem, 76vw);
+
+  max-width: 100%;
+  min-width: 0;
+
+  margin: 0 auto;
+
+  /*
+   * Do NOT clip the expanded doughnut.
+   */
+  overflow: visible;
+
+  aspect-ratio: 1 / 1;
+
+  display: grid;
+  place-items: center;
+
+  /*
+   * Make the whole shell capable of receiving
+   * mouse movement.
+   */
+  cursor: default;
+}
+
+
+/* =========================================================
+   CANVAS
+   ========================================================= */
+
+.chartjs-doughnut-shell canvas,
+.chartjs-line-shell canvas {
+  width: 100% !important;
+  height: 100% !important;
+
+  max-width: 100% !important;
+  max-height: 100% !important;
+
+  display: block;
+
+  pointer-events: auto;
+}
+
+
+/* =========================================================
+   CUSTOM DOUGHNUT TOOLTIP
+   ========================================================= */
+
+.donut-selection-tooltip {
+  position: absolute;
+
+  left: 50%;
+  top: 50%;
+
+  transform: translate(-50%, -50%);
+
+  display: inline-flex;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 0.5rem;
+
+  padding: 0.45rem 0.7rem;
+
+  border-radius: 999px;
+
+  border: 1px solid rgba(255, 255, 255, 0.18);
+
+  background: rgba(7, 20, 38, 0.94);
+
+  color: #f7fbff;
+
+  font-size: 0.72rem;
+
+  white-space: nowrap;
+
+  /*
+   * VERY IMPORTANT:
+   *
+   * The tooltip must NEVER capture the mouse.
+   *
+   * The parent chart container continues receiving
+   * mouse movement while this element is visible.
+   */
+  pointer-events: none;
+
+  z-index: 3;
+
+  backdrop-filter: blur(4px);
+}
+
+
+.donut-selection-tooltip strong {
+  color: #ffffff;
+
+  font-weight: 700;
+}
+
+
+/* =========================================================
+   MOBILE
+   ========================================================= */
+
+@media (max-width: 640px) {
+  .chartjs-line-shell {
+    height: clamp(170px, 38vw, 200px);
+
+    min-height: 170px;
+  }
+
+
+  .chartjs-doughnut-shell {
+    width: min(13rem, 100%);
+
+    height: min(13rem, 100%);
+  }
+
+
+  .donut-selection-tooltip {
+    font-size: 0.66rem;
+
+    padding: 0.38rem 0.6rem;
+
+    pointer-events: none;
+  }
+}

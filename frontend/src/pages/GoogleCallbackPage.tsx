@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { showAppAlert } from "../utils/alertConfig";
 
 const backendBaseUrl = String(
   import.meta.env.VITE_BACKEND_URL ||
@@ -7,153 +8,142 @@ const backendBaseUrl = String(
     "http://localhost:8000"
 ).replace(/\/$/, "");
 
-function getTokenFromResponse(data: Record<string, unknown>): string | null {
-  const possibleKeys = [
-    "token",
-    "access_token",
-    "auth_token",
-    "jwt",
-    "accessToken",
-  ];
-
-  for (const key of possibleKeys) {
-    const value = data[key];
-    if (typeof value === "string" && value.trim()) {
-      return value;
-    }
-  }
-
-  const nested = data.data as Record<string, unknown> | undefined;
-  if (nested) {
-    const nestedToken = getTokenFromResponse(nested);
-    if (nestedToken) {
-      return nestedToken;
-    }
-  }
-
-  const result = data.result as Record<string, unknown> | undefined;
-  if (result) {
-    const resultToken = getTokenFromResponse(result);
-    if (resultToken) {
-      return resultToken;
-    }
-  }
-
-  return null;
-}
-
-const sanitizeNoticeText = (text: string, type: "success" | "error" = "success") => {
-  const value = String(text ?? "").trim();
-
-  if (!value) {
-    return type === "success" ? "Google login successful." : "Authentication failed. Please try again.";
-  }
-
-  const cleaned = value
-    .replace(/auth_code\s*[:=][^,\n]+/gi, "")
-    .replace(/code_verifier\s*[:=][^,\n]+/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .replace(/[,\s]+$/g, "")
-    .trim();
-
-  if (!cleaned || /auth_code|code_verifier/i.test(value)) {
-    return type === "success" ? "Google login successful." : "Authentication failed. Please try again.";
-  }
-
-  return cleaned;
-};
-
 export default function GoogleCallbackPage() {
   const navigate = useNavigate();
-  const [statusText, setStatusText] = useState("Processing Google login...");
+
+  const [statusText, setStatusText] = useState(
+    "Processing Google login..."
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
 
     if (!code) {
-      window.sessionStorage.setItem(
+      const failedText = "Google login failed. Please try again.";
+      setStatusText(failedText);
+
+      showAppAlert({
+        title: "Error",
+        text: failedText,
+        type: "error",
+      });
+
+      sessionStorage.setItem(
         "auth_notice",
-        JSON.stringify({ text: sanitizeNoticeText("Please login again.", "error"), type: "error" })
+        JSON.stringify({
+          text: failedText,
+          type: "error",
+        })
       );
+
       navigate("/login", { replace: true });
       return;
     }
 
     const finalizeLogin = async () => {
       try {
-        const url = `${backendBaseUrl}/auth/google/callback?code=${encodeURIComponent(code)}`;
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            Accept: "application/json",
-          },
-        });
+        const response = await fetch(
+          `${backendBaseUrl}/auth/google/callback?code=${encodeURIComponent(code)}`,
+          {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            credentials: "include",
+          }
+        );
 
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
-          throw new Error(data.detail || data.message || "Google login failed.");
+          throw new Error(
+            data.detail ||
+              data.message ||
+              "Google login failed."
+          );
         }
 
-        const token = getTokenFromResponse(data as Record<string, unknown>);
+        const token =
+          data?.access_token ||
+          data?.token ||
+          data?.auth_token ||
+          data?.result?.access_token ||
+          data?.result?.token ||
+          data?.data?.access_token ||
+          data?.data?.token;
+
+        const refreshToken =
+          data?.refresh_token ||
+          data?.refreshToken ||
+          data?.result?.refresh_token ||
+          data?.result?.refreshToken ||
+          data?.data?.refresh_token ||
+          data?.data?.refreshToken;
 
         if (token) {
           localStorage.setItem("auth_token", token);
-          window.dispatchEvent(new CustomEvent("auth-success"));
-
-          const successMessage = sanitizeNoticeText(
-            typeof data.message === "string" && data.message.trim()
-              ? data.message
-              : "Google login successful.",
-            "success"
-          );
-
-          window.sessionStorage.setItem(
-            "auth_notice",
-            JSON.stringify({ text: successMessage, type: "success" })
-          );
-
-          const cleanUrl = new URL(window.location.href);
-          cleanUrl.search = "";
-          window.history.replaceState({}, "", cleanUrl.toString());
-
-          navigate("/dashboard", { replace: true });
-          return;
         }
 
-        const fallbackMessage = sanitizeNoticeText(
-          typeof data.message === "string" && data.message.trim()
-            ? data.message
-            : "Google login was successful.",
-          "success"
-        );
+        if (refreshToken) {
+          localStorage.setItem("refresh_token", refreshToken);
+        }
 
-        window.sessionStorage.setItem(
+        if (!token && !refreshToken) {
+          localStorage.setItem("auth_session", "1");
+        }
+
+        const successText = data.message || "Google login successful.";
+
+        showAppAlert({
+          title: "Success",
+          text: successText,
+          type: "success",
+          timer: 2000,
+        });
+
+        sessionStorage.setItem(
           "auth_notice",
-          JSON.stringify({ text: fallbackMessage, type: "success" })
+          JSON.stringify({
+            text: successText,
+            type: "success",
+          })
         );
 
+        // Remove ?code=... from browser URL
         const cleanUrl = new URL(window.location.href);
         cleanUrl.search = "";
-        window.history.replaceState({}, "", cleanUrl.toString());
+        window.history.replaceState(
+          {},
+          "",
+          cleanUrl.toString()
+        );
+
+        window.dispatchEvent(new CustomEvent("auth-success"));
 
         navigate("/dashboard", { replace: true });
       } catch (error) {
-        const message = sanitizeNoticeText(
-          error instanceof Error ? error.message : "Google login failed.",
-          "error"
-        );
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Google login failed.";
+
         setStatusText(message);
 
-        window.sessionStorage.setItem(
-          "auth_notice",
-          JSON.stringify({ text: message, type: "error" })
-        );
+        showAppAlert({
+          title: "Error",
+          text: message,
+          type: "error",
+        });
 
-        const cleanUrl = new URL(window.location.href);
-        cleanUrl.search = "";
-        window.history.replaceState({}, "", cleanUrl.toString());
+        sessionStorage.setItem(
+          "auth_notice",
+          JSON.stringify({
+            text: message,
+            type: "error",
+          })
+        );
 
         navigate("/login", { replace: true });
       }

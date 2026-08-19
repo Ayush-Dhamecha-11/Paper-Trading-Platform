@@ -1,122 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import "./Header.css";
 
-const styles = {
-  header: {
-    width: "100%",
-    background: "rgba(9, 17, 29, 0.86)",
-    borderBottom: "1px solid rgba(148, 163, 184, 0.18)",
-    backdropFilter: "blur(14px)",
-    position: "sticky" as const,
-    top: 0,
-    zIndex: 10,
-  },
-  inner: {
-    maxWidth: "1280px",
-    margin: "0 auto",
-    padding: "0.9rem 1.25rem",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "1rem",
-  },
-  brand: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.75rem",
-    color: "#f8fbff",
-    fontWeight: 700,
-    letterSpacing: "0.06em",
-    textTransform: "uppercase" as const,
-    fontSize: "0.8rem",
-  },
-  logo: {
-    width: "34px",
-    height: "34px",
-    borderRadius: "10px",
-    background: "linear-gradient(135deg, #7dd3fc, #2563eb)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#071426",
-    fontWeight: 800,
-    fontSize: "0.9rem",
-  },
-  right: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.75rem",
-  },
-  userMenu: {
-    position: "relative" as const,
-  },
-  avatarButton: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.7rem",
-    background: "rgba(15, 23, 42, 0.82)",
-    border: "1px solid rgba(148, 163, 184, 0.22)",
-    borderRadius: "999px",
-    padding: "0.42rem 0.7rem 0.42rem 0.5rem",
-    color: "#ebf4ff",
-    cursor: "pointer",
-    transition: "all 0.2s ease",
-  },
-  avatar: {
-    width: "34px",
-    height: "34px",
-    borderRadius: "50%",
-    objectFit: "cover" as const,
-    border: "1px solid rgba(148, 163, 184, 0.4)",
-    background: "linear-gradient(135deg, #1e293b, #334155)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#f8fbff",
-    fontSize: "0.9rem",
-    fontWeight: 700,
-  },
-  menu: {
-    position: "absolute" as const,
-    right: 0,
-    top: "calc(100% + 0.7rem)",
-    minWidth: "220px",
-    background: "rgba(15, 23, 42, 0.98)",
-    border: "1px solid rgba(148, 163, 184, 0.18)",
-    borderRadius: "18px",
-    boxShadow: "0 20px 32px rgba(2, 6, 23, 0.45)",
-    overflow: "hidden",
-  },
-  menuHeader: {
-    padding: "0.9rem 1rem 0.6rem",
-    borderBottom: "1px solid rgba(148, 163, 184, 0.12)",
-    display: "flex",
-    alignItems: "center",
-    gap: "0.75rem",
-  },
-  menuBody: {
-    padding: "0.45rem 0",
-  },
-  menuItem: {
-    width: "100%",
-    background: "transparent",
-    border: "none",
-    color: "#eaf3ff",
-    padding: "0.8rem 1rem",
-    textAlign: "left" as const,
-    cursor: "pointer",
-    fontSize: "0.95rem",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  dangerItem: {
-    color: "#fca5a5",
-  },
-  hiddenMobile: {
-    display: "flex",
-    alignItems: "center",
-    gap: "0.75rem",
-  },
+const navItems = ["Dashboard", "Analytics", "Portfolio"] as const;
+
+const getStoredTheme = () => {
+  const savedTheme = localStorage.getItem("Tradonova-theme");
+  return savedTheme === "light" ? "light" : "dark";
 };
 
 type HeaderProps = {
@@ -138,103 +28,175 @@ export default function Header({
   userEmail = "user@example.com",
   avatarUrl,
   onLogout,
-}: HeaderProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+}: Readonly<HeaderProps>) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [theme, setTheme] = useState<"light" | "dark">(() => getStoredTheme());
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
+      if (headerRef.current && !headerRef.current.contains(event.target as Node)) {
+        setMobileMenuOpen(false);
+        setUserMenuOpen(false);
       }
     };
 
+    const handleThemeChange = () => {
+      setTheme(getStoredTheme());
+    };
+
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("theme-change", handleThemeChange);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("theme-change", handleThemeChange);
+    };
   }, []);
 
   const handleLogout = () => {
-    setMenuOpen(false);
+    setUserMenuOpen(false);
     onLogout?.();
   };
 
+  const handleMyProfile = () => {
+    setUserMenuOpen(false);
+    navigate("/profile");
+  };
+
+  const handleHelpSupport = () => {
+    setUserMenuOpen(false);
+    navigate("/profile?section=support");
+  };
+
+  const handleNavClick = (item: (typeof navItems)[number]) => {
+    setMobileMenuOpen(false);
+
+    if (item === "Dashboard") {
+      navigate("/dashboard");
+      return;
+    }
+
+    if (item === "Analytics") {
+      navigate("/dashboard");
+      return;
+    }
+
+    navigate("/dashboard");
+  };
+
+  const handleMobileToggle = () => {
+    setMobileMenuOpen((prev) => !prev);
+    setUserMenuOpen(false);
+  };
+
+  const handleUserToggle = () => {
+    setUserMenuOpen((prev) => !prev);
+    setMobileMenuOpen(false);
+  };
+
   return (
-    <header style={styles.header}>
-      <div style={styles.inner}>
-        <div style={styles.brand}>
+    <header className="top-header">
+      <div className="header-inner" ref={headerRef}>
+        <div className="brand-mark" aria-label="TradeNova brand">
           <img
-            src="/logos/Tradenova_Dark.png"
+            src={theme === "dark" ? "/logos/Tradenova_Dark.png" : "/logos/Tradenova_Light.png"}
             alt="TradeNova"
-            style={{
-              width: "120px",
-              height: "auto",
-              objectFit: "contain",
-              display: "block",
-            }}
+            className="brand-logo"
           />
         </div>
 
-        <div style={styles.right}>
-          <div style={styles.hiddenMobile} />
-
-          <div ref={menuRef} style={styles.userMenu}>
+        <nav className="header-tabs" aria-label="Main navigation">
+          {navItems.map((item) => (
             <button
+              key={item}
               type="button"
-              onClick={() => setMenuOpen((prev) => !prev)}
-              style={styles.avatarButton}
-              aria-label="Open user menu"
+              className={`header-tab ${item === "Dashboard" ? "active" : ""}`}
+              onClick={() => handleNavClick(item)}
             >
-              {avatarUrl ? (
-                <img
-                  src={avatarUrl}
-                  alt={userName}
-                  style={styles.avatar}
-                />
-              ) : (
-                <div style={styles.avatar}>{getInitials(userName)}</div>
-              )}
-
-              <span style={{ fontSize: "0.9rem", fontWeight: 600 }}>{userName}</span>
+              {item}
             </button>
+          ))}
+        </nav>
 
-            {menuOpen && (
-              <div style={styles.menu}>
-                <div style={styles.menuHeader}>
-                  {avatarUrl ? (
-                    <img
-                      src={avatarUrl}
-                      alt={userName}
-                      style={{ ...styles.avatar, width: "42px", height: "42px" }}
-                    />
-                  ) : (
-                    <div style={{ ...styles.avatar, width: "42px", height: "42px" }}>
-                      {getInitials(userName)}
-                    </div>
-                  )}
+        <div className="mobile-nav-wrap">
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            aria-label="Open navigation menu"
+            aria-expanded={mobileMenuOpen}
+            onClick={handleMobileToggle}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
 
-                  <div>
-                    <div style={{ color: "#eff6ff", fontWeight: 700 }}>{userName}</div>
-                    <div style={{ color: "#9bb3c9", fontSize: "0.73rem" }}>{userEmail}</div>
-                  </div>
-                </div>
+          {mobileMenuOpen && (
+            <div className="mobile-menu-panel" role="menu" aria-label="Mobile navigation">
+              {navItems.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={`mobile-menu-item ${item === "Dashboard" ? "active" : ""}`}
+                  onClick={() => handleNavClick(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
-                <div style={styles.menuBody}>
-                  <button type="button" style={styles.menuItem}>
-                    <span>View Profile</span>
-                    <span>→</span>
-                  </button>
-                  <button type="button" style={styles.menuItem}>
-                    <span>Analytics</span>
-                    <span>↗</span>
-                  </button>
-                  <button type="button" style={{ ...styles.menuItem, ...styles.dangerItem }} onClick={handleLogout}>
-                    <span>Logout</span>
-                    <span>⎋</span>
-                  </button>
+        <div className="header-actions">
+          <button
+            type="button"
+            onClick={handleUserToggle}
+            className="user-avatar-button"
+            aria-label="Open user menu"
+          >
+            {avatarUrl ? (
+              <img src={avatarUrl} alt={userName} className="user-avatar" />
+            ) : (
+              <div className="user-avatar">{getInitials(userName)}</div>
+            )}
+
+            <span>{userName}</span>
+          </button>
+
+          {userMenuOpen && (
+            <div className="avatar-menu">
+              <div className="avatar-menu-header">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt={userName} className="user-avatar" />
+                ) : (
+                  <div className="user-avatar">{getInitials(userName)}</div>
+                )}
+
+                <div>
+                  <div style={{ fontWeight: 700 }}>{userName}</div>
+                  <div style={{ color: "var(--header-muted)", fontSize: "0.72rem" }}>{userEmail}</div>
                 </div>
               </div>
-            )}
-          </div>
+
+              <div className="avatar-menu-body">
+                <button type="button" className="menu-action" onClick={handleMyProfile}>
+                  <span>My Profile</span>
+                  <span>→</span>
+                </button>
+                <button type="button" className="menu-action" onClick={handleHelpSupport}>
+                  <span>Help &amp; Support</span>
+                  <span>↗</span>
+                </button>
+                <button type="button" className="menu-action danger" onClick={handleLogout}>
+                  <span>Logout</span>
+                  <span>⎋</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </header>
