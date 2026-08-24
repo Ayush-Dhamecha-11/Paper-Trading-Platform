@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { showAppAlert } from "../utils/alertConfig";
+import { setStoredAuthToken } from "../utils/authUtils";
 import "../pages_css/login.css";
 
 const backendBaseUrl = String(
@@ -26,7 +27,6 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   useEffect(() => {
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
@@ -47,27 +47,40 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
     window.history.replaceState({}, "", cleanUrl.toString());
   }, []);
   const saveAuthToken = (token: string) => {
-    localStorage.setItem("auth_token", token);
-    window.dispatchEvent(new CustomEvent("auth-success"));
+    setStoredAuthToken(token);
     onAuthSuccess?.();
   };
 
   const handleSubmit = async (event: { preventDefault: () => void }) => {
     event.preventDefault();
-    setMessage(null);
 
     if (!resetTokens.accessToken || !resetTokens.refreshToken) {
-      setMessage({ text: "Reset token is missing. Please use the link from your email.", type: "error" });
+      showAppAlert({
+        title: "Error",
+        text: "Reset token is missing. Please use the link from your email.",
+        type: "error",
+        timer: 2200,
+      });
       return;
     }
 
     if (!password.trim()) {
-      setMessage({ text: "Please enter a new password.", type: "error" });
+      showAppAlert({
+        title: "Validation Error",
+        text: "Please enter a new password.",
+        type: "error",
+        timer: 2200,
+      });
       return;
     }
 
     if (password !== confirmPassword) {
-      setMessage({ text: "Passwords do not match.", type: "error" });
+      showAppAlert({
+        title: "Validation Error",
+        text: "Passwords do not match.",
+        type: "error",
+        timer: 2200,
+      });
       return;
     }
 
@@ -94,7 +107,6 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
       }
 
       const successText = data.message || "Password updated successfully.";
-      setMessage({ text: successText, type: "success" });
       const token = data.token || data.access_token || data.refresh_token;
       saveAuthToken(token);
 
@@ -113,11 +125,11 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
       setTimeout(() => navigate("/dashboard", { replace: true }), 1200);
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : "Unable to reset password.";
-      setMessage({ text: errMessage, type: "error" });
       showAppAlert({
         title: "Error",
         text: errMessage,
         type: "error",
+        timer: 2400,
       });
     } finally {
       setLoading(false);
@@ -189,12 +201,6 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
                 autoComplete="new-password"
               />
             </div>
-
-            {message && (
-              <div className={`toast-message ${message.type}`} role="status" aria-live="polite">
-                {message.text}
-              </div>
-            )}
 
             <button type="submit" className="login-button" disabled={loading}>
               {loading ? "Updating password..." : "Update password"}

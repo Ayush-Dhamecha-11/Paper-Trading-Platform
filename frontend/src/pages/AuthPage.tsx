@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PasswordField from "../components/PasswordField";
 import { showAppAlert } from "../utils/alertConfig";
+import { markUserLoggedIn, setStoredAuthToken } from "../utils/authUtils";
 import "../pages_css/login.css";
 
 type AuthMode = "login" | "signup";
@@ -24,29 +25,6 @@ export default function AuthPage({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState<{ text: string; type: "success" | "error" } | null>(() => {
-    const savedNotice = window.sessionStorage.getItem("auth_notice");
-
-    if (!savedNotice) {
-      return null;
-    }
-
-    try {
-      const parsedNotice = JSON.parse(savedNotice) as { text?: string; type?: "success" | "error" };
-      if (!parsedNotice.text) {
-        return null;
-      }
-
-      return {
-        text: parsedNotice.text,
-        type: parsedNotice.type === "error" ? "error" : "success",
-      };
-    } catch {
-      window.sessionStorage.removeItem("auth_notice");
-      return null;
-    }
-  });
-  const noticeTimeoutRef = useRef<number | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const savedTheme = localStorage.getItem("Tradonova-theme");
 
@@ -87,7 +65,6 @@ export default function AuthPage({
 
   const showNotice = (text: string, type: "success" | "error" = "success") => {
     const nextText = normalizeNoticeText(text, type);
-    setNotice({ text: nextText, type });
     window.sessionStorage.setItem("auth_notice", JSON.stringify({ text: nextText, type }));
 
     showAppAlert({
@@ -96,15 +73,6 @@ export default function AuthPage({
       type,
       timer: 2400,
     });
-
-    if (noticeTimeoutRef.current) {
-      window.clearTimeout(noticeTimeoutRef.current);
-    }
-
-    noticeTimeoutRef.current = window.setTimeout(() => {
-      setNotice(null);
-      window.sessionStorage.removeItem("auth_notice");
-    }, 3000);
   };
 
   const isLogin = mode === "login";
@@ -116,14 +84,12 @@ export default function AuthPage({
   ).replace(/\/$/, "");
 
   const saveAuthToken = (token: string) => {
-    localStorage.setItem("auth_token", token);
-    window.dispatchEvent(new CustomEvent("auth-success"));
+    setStoredAuthToken(token);
     onAuthSuccess?.();
   };
 
   const markLoggedIn = () => {
-    localStorage.setItem("auth_session", "1");
-    window.dispatchEvent(new CustomEvent("auth-success"));
+    markUserLoggedIn();
     onAuthSuccess?.();
   };
 
@@ -370,14 +336,6 @@ export default function AuthPage({
           </div>
 
           <form onSubmit={handleSubmit} className="login-form">
-            {notice && (
-              <div className="toast-overlay">
-                <div className={`toast-message ${notice.type}`} role="status" aria-live="polite">
-                  {notice.text}
-                </div>
-              </div>
-            )}
-
             {/* {!isLogin && (
               <div className="field">
                 <label htmlFor="name">Name</label>

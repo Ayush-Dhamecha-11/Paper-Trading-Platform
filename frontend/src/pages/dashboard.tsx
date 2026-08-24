@@ -1,6 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Header from "../components/Header";
 import { AllocationDoughnutChart, ProfitLineChart, type ChartRangeKey } from "../utils/chartUtils";
+import StockTable from "../components/StockTable/StockTable";
+import { STOCK_UNIVERSE, type Stock } from "../data/stocksData";
+import { logoutUser } from "../utils/authUtils";
+import { formatCurrency } from "../utils/formatters";
 import "../pages_css/dashboard.css";
 
 const rangeData: Record<"30D" | "6M" | "1Y", number[]> = {
@@ -25,12 +29,114 @@ const sectorAllocation = [
   { name: "Consumer", value: 12, color: "#ff7b72" },
 ];
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 2,
-  }).format(value);
+const API_BASE_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://localhost:8000";
+
+async function fetchStocks(): Promise<Stock[]> {
+  const response = await fetch(`${API_BASE_URL}/api/stocks`);
+
+  if (!response.ok) {
+    throw new Error("Unable to load stocks from backend");
+  }
+
+  const data = (await response.json()) as Stock[] | { stocks?: Stock[] };
+  return Array.isArray(data) ? data : data.stocks ?? [];
+}
+
+export function DashboardPerformanceCharts({
+  range,
+  onRangeChange,
+}: Readonly<{
+  range: ChartRangeKey;
+  onRangeChange: (range: ChartRangeKey) => void;
+}>) {
+  const chartValues = rangeData[range];
+  const chartLabels = Array.from({ length: chartValues.length }, (_, index) => `P${index + 1}`);
+
+  return (
+    <>
+      <div className="panel chart-panel">
+        <div className="panel-header">
+          <div>
+            <p className="panel-label">Performance</p>
+            <h2>Profit over time</h2>
+          </div>
+
+          <div className="range-switcher" aria-label="Filter time range">
+            {(Object.keys(rangeData) as ChartRangeKey[]).map((key) => (
+              <button
+                key={key}
+                type="button"
+                className={range === key ? "active" : ""}
+                onClick={() => onRangeChange(key)}
+              >
+                {key}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="chart-wrap">
+          <ProfitLineChart values={chartValues} labels={chartLabels} />
+        </div>
+      </div>
+
+      <div className="panel allocation-panel">
+        <div className="panel-header simple-header">
+          <div>
+            <p className="panel-label">Allocation</p>
+            <h2>Sector mix</h2>
+          </div>
+        </div>
+
+        <div className="allocation-content">
+          <AllocationDoughnutChart sectors={sectorAllocation} />
+        </div>
+      </div>
+    </>
+  );
+}
+
+export function DashboardHoldingsTable() {
+  return (
+    <div className="panel holdings-panel">
+      <div className="panel-header">
+        <div>
+          <p className="panel-label">Portfolio</p>
+          <h2>Holdings</h2>
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Name</th>
+              <th>Price</th>
+              <th>Qty</th>
+              <th>P/L</th>
+            </tr>
+          </thead>
+          <tbody>
+            {holdings.map((stock) => (
+              <tr key={stock.ticker}>
+                <td>{stock.ticker}</td>
+                <td>{stock.name}</td>
+                <td>{formatCurrency(stock.price)}</td>
+                <td>{stock.quantity}</td>
+                <td className={stock.profit >= 0 ? "profit-value" : "loss-value"}>
+                  {formatCurrency(stock.profit)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function DashboardPage() {
@@ -56,7 +162,7 @@ function DashboardPage() {
       return null;
     }
   })();
-  const [range, setRange] = useState<ChartRangeKey>("30D");
+  const [stocks, setStocks] = useState<Stock[]>(STOCK_UNIVERSE);
 
   const totalPortfolioValue = useMemo(
     () => holdings.reduce((sum, item) => sum + item.price * item.quantity, 0),
@@ -72,27 +178,32 @@ function DashboardPage() {
   );
   const todayPnL = 1240.6;
 
-  const chartValues = rangeData[range];
-  const chartLabels = Array.from({ length: chartValues.length }, (_, index) => `P${index + 1}`);
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchStocks()
+      .then((backendStocks) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setStocks(backendStocks.length > 0 ? backendStocks : STOCK_UNIVERSE);
+      })
+      .catch(() => {
+        if (!isMounted) {
+          return;
+        }
+
+        setStocks(STOCK_UNIVERSE);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleLogout = async () => {
-    try {
-      await fetch(`${String(import.meta.env.VITE_BACKEND_URL || import.meta.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "")}/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-    } catch {
-      // Ignore logout request errors and continue with local cleanup.
-    }
-
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("auth_session");
-    window.dispatchEvent(new CustomEvent("auth-success"));
-    window.location.href = "/login";
+    await logoutUser({ redirectTo: "/login" });
   };
 
   return (
@@ -145,81 +256,13 @@ function DashboardPage() {
           </div>
         </section>
 
-        <section className="dashboard-grid">
-          <div className="panel chart-panel">
-            <div className="panel-header">
-              <div>
-                <p className="panel-label">Performance</p>
-                <h2>Profit over time</h2>
-              </div>
-
-              <div className="range-switcher" aria-label="Filter time range">
-                {(Object.keys(rangeData) as ChartRangeKey[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={range === key ? "active" : ""}
-                    onClick={() => setRange(key)}
-                  >
-                    {key}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="chart-wrap">
-              <ProfitLineChart values={chartValues} labels={chartLabels} />
-            </div>
-          </div>
-
-          <div className="panel allocation-panel">
-            <div className="panel-header simple-header">
-              <div>
-                <p className="panel-label">Allocation</p>
-                <h2>Sector mix</h2>
-              </div>
-            </div>
-
-            <div className="allocation-content">
-              <AllocationDoughnutChart sectors={sectorAllocation} />
-            </div>
-          </div>
-
-          <div className="panel holdings-panel">
-            <div className="panel-header">
-              <div>
-                <p className="panel-label">Portfolio</p>
-                <h2>Holdings</h2>
-              </div>
-            </div>
-
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Ticker</th>
-                    <th>Name</th>
-                    <th>Price</th>
-                    <th>Qty</th>
-                    <th>P/L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {holdings.map((stock) => (
-                    <tr key={stock.ticker}>
-                      <td>{stock.ticker}</td>
-                      <td>{stock.name}</td>
-                      <td>{formatCurrency(stock.price)}</td>
-                      <td>{stock.quantity}</td>
-                      <td className={stock.profit >= 0 ? "profit-value" : "loss-value"}>
-                        {formatCurrency(stock.profit)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        <section className="dashboard-stock-section">
+          <StockTable
+            stocks={stocks}
+            title="Available Stocks"
+            subtitle="Search, filter and sort the full NSE stock universe"
+            visibleRows={8}
+          />
         </section>
       </div>
     </main>

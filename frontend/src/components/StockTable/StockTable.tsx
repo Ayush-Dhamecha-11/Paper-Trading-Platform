@@ -1,0 +1,308 @@
+import { useMemo, useState, type CSSProperties } from "react";
+import {
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
+  ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
+import type { Stock } from "../../data/stocksData";
+import {
+  formatChangePercent,
+  formatCurrency,
+  formatVolume,
+} from "../../utils/formatters";
+import "./StockTable.css";
+
+type SortKey = "ticker" | "name" | "price" | "changePct" | "open" | "close" | "volume";
+
+type SortDirection = "asc" | "desc";
+
+type SortState = {
+  key: SortKey;
+  direction: SortDirection;
+};
+
+const SORTABLE_COLUMNS: ReadonlyArray<{
+  key: SortKey;
+  label: string;
+  align: "left" | "right";
+}> = [
+  { key: "ticker", label: "Ticker", align: "left" },
+  { key: "name", label: "Name", align: "left" },
+  { key: "price", label: "Current Price", align: "right" },
+  { key: "changePct", label: "Change %", align: "right" },
+  { key: "open", label: "Open", align: "right" },
+  { key: "close", label: "Close", align: "right" },
+  { key: "volume", label: "Volume", align: "right" },
+];
+
+const SORT_OPTIONS: ReadonlyArray<{
+  key: SortKey;
+  label: string;
+}> = [
+  { key: "ticker", label: "Ticker" },
+  { key: "name", label: "Name" },
+  { key: "price", label: "Current price" },
+  { key: "changePct", label: "Percentage change" },
+  { key: "open", label: "Open price" },
+  { key: "close", label: "Close price" },
+  { key: "volume", label: "Volume" },
+];
+
+function compareRows(left: Stock, right: Stock, key: SortKey): number {
+  const leftValue = left[key];
+  const rightValue = right[key];
+
+  if (typeof leftValue === "number" && typeof rightValue === "number") {
+    return leftValue - rightValue;
+  }
+
+  return String(leftValue).localeCompare(String(rightValue));
+}
+
+function SortDirectionIcon({
+  columnKey,
+  sort,
+}: Readonly<{
+  columnKey: SortKey;
+  sort: SortState;
+}>) {
+  if (sort.key !== columnKey) {
+    return <ChevronsUpDown size={14} aria-hidden="true" />;
+  }
+
+  return sort.direction === "asc" ? (
+    <ChevronUp size={14} aria-hidden="true" />
+  ) : (
+    <ChevronDown size={14} aria-hidden="true" />
+  );
+}
+
+export default function StockTable({
+  stocks,
+  title = "Stock Universe",
+  subtitle = "Browse all stocks available on the platform",
+  visibleRows = 8,
+}: Readonly<{
+  stocks: Stock[];
+  title?: string;
+  subtitle?: string;
+  visibleRows?: number;
+}>) {
+  const [query, setQuery] = useState("");
+  const [sector, setSector] = useState("all");
+  const [sort, setSort] = useState<SortState>({ key: "ticker", direction: "asc" });
+
+  const allSectors = useMemo(
+    () => Array.from(new Set(stocks.map((stock) => stock.sector))).sort(),
+    [stocks]
+  );
+
+  const filteredStocks = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    const filtered = stocks.filter((stock) => {
+      const matchesSector = sector === "all" || stock.sector === sector;
+      const matchesQuery =
+        normalizedQuery.length === 0 ||
+        stock.ticker.toLowerCase().includes(normalizedQuery) ||
+        stock.name.toLowerCase().includes(normalizedQuery);
+
+      return matchesSector && matchesQuery;
+    });
+
+    return [...filtered].sort((left, right) => {
+      const comparison = compareRows(left, right, sort.key);
+      return sort.direction === "asc" ? comparison : -comparison;
+    });
+  }, [stocks, query, sector, sort]);
+
+  const handleSort = (columnKey: SortKey) => {
+    setSort((current) => {
+      if (current.key === columnKey) {
+        return {
+          key: columnKey,
+          direction: current.direction === "asc" ? "desc" : "asc",
+        };
+      }
+
+      return { key: columnKey, direction: "asc" };
+    });
+  };
+
+  const handleReset = () => {
+    setQuery("");
+    setSector("all");
+    setSort({ key: "ticker", direction: "asc" });
+  };
+
+  const hasActiveControls =
+    query.trim().length > 0 || sector !== "all" || sort.key !== "ticker" || sort.direction !== "asc";
+
+  return (
+    <section className="stock-table-panel" aria-labelledby="stock-table-title">
+      <div className="stock-table-header">
+        <div>
+          <h2 id="stock-table-title">{title}</h2>
+          <p>{subtitle}</p>
+        </div>
+
+        {/* <span className="stock-count-badge">
+          {filteredStocks.length} / {stocks.length} stocks
+        </span> */}
+      </div>
+
+      <div className="stock-table-controls">
+        <label className="stock-table-search" htmlFor="stock-search">
+          <Search size={16} aria-hidden="true" />
+          <span className="sr-only">Search stocks</span>
+          <input
+            id="stock-search"
+            type="search"
+            placeholder="Search by ticker or name"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+
+        <label className="stock-table-filter" htmlFor="stock-sector-filter">
+          <SlidersHorizontal size={16} aria-hidden="true" />
+          <span className="sr-only">Filter by sector</span>
+          <select
+            id="stock-sector-filter"
+            value={sector}
+            onChange={(event) => setSector(event.target.value)}
+          >
+            <option value="all">All sectors</option>
+            {allSectors.map((sectorName) => (
+              <option key={sectorName} value={sectorName}>
+                {sectorName}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="stock-table-filter" htmlFor="stock-sort-filter">
+          <ChevronsUpDown size={16} aria-hidden="true" />
+          <span className="sr-only">Sort by</span>
+          <select
+            id="stock-sort-filter"
+            value={sort.key}
+            onChange={(event) =>
+              setSort((current) => ({
+                ...current,
+                key: event.target.value as SortKey,
+              }))
+            }
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.key} value={option.key}>
+                Sort by {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="stock-sort-direction" aria-label="Sort direction">
+          <button
+            type="button"
+            className={sort.direction === "asc" ? "active" : ""}
+            onClick={() => setSort((current) => ({ ...current, direction: "asc" }))}
+            aria-pressed={sort.direction === "asc"}
+          >
+            <ArrowUpNarrowWide size={15} aria-hidden="true" />
+            <span>Asc</span>
+          </button>
+          <button
+            type="button"
+            className={sort.direction === "desc" ? "active" : ""}
+            onClick={() => setSort((current) => ({ ...current, direction: "desc" }))}
+            aria-pressed={sort.direction === "desc"}
+          >
+            <ArrowDownWideNarrow size={15} aria-hidden="true" />
+            <span>Desc</span>
+          </button>
+        </div>
+
+        {hasActiveControls && (
+          <button type="button" className="stock-table-reset" onClick={handleReset}>
+            Reset
+          </button>
+        )}
+      </div>
+
+      <div className="stock-table-scroll" style={{ "--visible-rows": visibleRows } as CSSProperties}>
+        {filteredStocks.length === 0 ? (
+          <div className="stock-table-empty">
+            <p>No stocks match your search.</p>
+            <button type="button" onClick={handleReset}>
+              Clear filters
+            </button>
+          </div>
+        ) : (
+          <table className="stock-table">
+            <thead>
+              <tr>
+                {SORTABLE_COLUMNS.map((column) => (
+                  <th
+                    key={column.key}
+                    scope="col"
+                    className={column.align === "right" ? "col-right" : "col-left"}
+                    aria-sort={
+                      sort.key === column.key
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
+                    <button
+                      type="button"
+                      className="stock-table-sort"
+                      onClick={() => handleSort(column.key)}
+                    >
+                      <span>{column.label}</span>
+                      <SortDirectionIcon columnKey={column.key} sort={sort} />
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredStocks.map((stock) => {
+                const changeClass =
+                  stock.changePct > 0
+                    ? "change-up"
+                    : stock.changePct < 0
+                      ? "change-down"
+                      : "change-flat";
+
+                return (
+                  <tr key={stock.ticker}>
+                    <td className="stock-ticker">
+                      <strong>{stock.ticker}</strong>
+                    </td>
+                    <td className="stock-name">
+                      <strong>{stock.name}</strong>
+                      <span>{stock.sector}</span>
+                    </td>
+                    <td className="col-right">{formatCurrency(stock.price)}</td>
+                    <td className={`col-right ${changeClass}`}>
+                      {formatChangePercent(stock.changePct)}
+                    </td>
+                    <td className="col-right">{formatCurrency(stock.open)}</td>
+                    <td className="col-right">{formatCurrency(stock.close)}</td>
+                    <td className="col-right">{formatVolume(stock.volume)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </section>
+  );
+}

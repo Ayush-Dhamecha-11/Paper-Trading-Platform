@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Header from "../components/Header";
+import { logoutUser } from "../utils/authUtils";
 import "../pages_css/profile.css";
 
 const profileSections = [
@@ -52,23 +53,7 @@ export default function ProfilePage() {
   };
 
   const handleLogout = async () => {
-    try {
-      await fetch(`${String(import.meta.env.VITE_BACKEND_URL || import.meta.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "")}/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-    } catch {
-      // Ignore logout request errors and continue with local cleanup.
-    }
-
-    localStorage.removeItem("auth_token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("auth_session");
-    window.dispatchEvent(new CustomEvent("auth-success"));
-    navigate("/login");
+    await logoutUser({ redirectTo: "/login" });
   };
 
   const toggleDarkMode = () => {

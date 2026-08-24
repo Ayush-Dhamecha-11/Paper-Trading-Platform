@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { hasStoredAuth } from "./utils/authUtils";
 import LoginPage from "./pages/login.tsx";
 import SignupPage from "./pages/signup.tsx";
 import DashboardPage from "./pages/dashboard.tsx";
@@ -22,13 +23,11 @@ function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean 
 }
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    return Boolean(localStorage.getItem("auth_token") || localStorage.getItem("auth_session"));
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => hasStoredAuth());
 
   useEffect(() => {
     const handleAuthSuccess = () => {
-      setIsAuthenticated(Boolean(localStorage.getItem("auth_token") || localStorage.getItem("auth_session")));
+      setIsAuthenticated(hasStoredAuth());
     };
 
     window.addEventListener("auth-success", handleAuthSuccess);

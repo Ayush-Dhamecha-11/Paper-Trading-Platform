@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./Header.css";
 
-const navItems = ["Dashboard", "Analytics", "Portfolio"] as const;
+const navItems = [
+  { label: "Dashboard", path: "/dashboard" },
+  { label: "Analytics", path: "/analytics" },
+  { label: "Portfolio", path: "/portfolio" },
+] as const;
 
 const getStoredTheme = () => {
   const savedTheme = localStorage.getItem("Tradonova-theme");
@@ -34,6 +38,7 @@ export default function Header({
   const [theme, setTheme] = useState<"light" | "dark">(() => getStoredTheme());
   const headerRef = useRef<HTMLDivElement | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -71,20 +76,9 @@ export default function Header({
     navigate("/profile?section=support");
   };
 
-  const handleNavClick = (item: (typeof navItems)[number]) => {
+  const handleNavClick = (path: string) => {
     setMobileMenuOpen(false);
-
-    if (item === "Dashboard") {
-      navigate("/dashboard");
-      return;
-    }
-
-    if (item === "Analytics") {
-      navigate("/dashboard");
-      return;
-    }
-
-    navigate("/dashboard");
+    navigate(path);
   };
 
   const handleMobileToggle = () => {
@@ -111,12 +105,12 @@ export default function Header({
         <nav className="header-tabs" aria-label="Main navigation">
           {navItems.map((item) => (
             <button
-              key={item}
+              key={item.path}
               type="button"
-              className={`header-tab ${item === "Dashboard" ? "active" : ""}`}
-              onClick={() => handleNavClick(item)}
+              className={`header-tab ${location.pathname === item.path ? "active" : ""}`}
+              onClick={() => handleNavClick(item.path)}
             >
-              {item}
+              {item.label}
             </button>
           ))}
         </nav>
@@ -138,12 +132,12 @@ export default function Header({
             <div className="mobile-menu-panel" role="menu" aria-label="Mobile navigation">
               {navItems.map((item) => (
                 <button
-                  key={item}
+                  key={item.path}
                   type="button"
-                  className={`mobile-menu-item ${item === "Dashboard" ? "active" : ""}`}
-                  onClick={() => handleNavClick(item)}
+                  className={`mobile-menu-item ${location.pathname === item.path ? "active" : ""}`}
+                  onClick={() => handleNavClick(item.path)}
                 >
-                  {item}
+                  {item.label}
                 </button>
               ))}
             </div>

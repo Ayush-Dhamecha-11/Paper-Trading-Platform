@@ -9,6 +9,7 @@
   --dashboard-accent: #27c7dc;
   --dashboard-success: #10b981;
   --dashboard-danger: #ff5e6d;
+  --dashboard-neutral: #b7c7d7;
   --dashboard-shadow: rgba(0, 0, 0, 0.18);
 }
 
@@ -23,6 +24,7 @@
   --dashboard-accent: #109db4;
   --dashboard-success: #15a36f;
   --dashboard-danger: #e85767;
+  --dashboard-neutral: #52677b;
   --dashboard-shadow: rgba(7, 20, 38, 0.08);
 }
 
@@ -51,6 +53,7 @@
   margin: 0;
   font-size: clamp(2.1rem, 3vw, 3.2rem);
   letter-spacing: -0.05em;
+  color: var(--dashboard-text);
 }
 
 .dashboard-kicker {
@@ -111,6 +114,11 @@
   min-width: 0;
 }
 
+.dashboard-stock-section {
+  width: 100%;
+  min-width: 0;
+}
+
 .panel {
   background: linear-gradient(180deg, var(--dashboard-panel), var(--dashboard-panel-strong));
   border: 1px solid var(--dashboard-border);
@@ -152,6 +160,7 @@
   margin: 0;
   font-size: clamp(1.3rem, 1.9vw, 2rem);
   letter-spacing: -0.04em;
+  color: var(--dashboard-text);
 }
 
 .range-switcher {
