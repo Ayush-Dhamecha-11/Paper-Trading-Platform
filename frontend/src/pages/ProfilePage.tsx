@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import Header from "../components/Header";
-import { logoutUser } from "../utils/authUtils";
+import { showAppAlert } from "../utils/alertConfig";
+import { getBackendBaseUrl, getStoredAuthTokens, logoutUser } from "../utils/authUtils";
 import "../pages_css/profile.css";
 
 const profileSections = [
@@ -13,53 +14,141 @@ const profileSections = [
 
 type ProfileSectionKey = (typeof profileSections)[number]["key"];
 
+type PasswordForm = {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+};
+
+function getInitials(name: string) {
+  return (
+    name
+      .split(" ")
+      .map((part) => part[0])
+      .slice(0, 2)
+      .join("") || "U"
+  );
+}
+
 export default function ProfilePage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [darkMode, setDarkMode] = useState(() => {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
     const savedTheme = localStorage.getItem("Tradonova-theme");
-    return savedTheme !== "light";
+    return savedTheme === "light" ? "light" : "dark";
   });
   const [autoTrade, setAutoTrade] = useState(false);
-  const [profileImage, setProfileImage] = useState<string>("");
   const [name, setName] = useState("Jenil Shah");
   const [email, setEmail] = useState("jenilshah740@gmail.com");
   const [isEditing, setIsEditing] = useState(false);
+  const [isPasswordEditing, setIsPasswordEditing] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordForm, setPasswordForm] = useState<PasswordForm>({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
   const [activeSection, setActiveSection] = useState<ProfileSectionKey>("profile");
 
   const requestedSection = searchParams.get("section");
-  const effectiveSection: ProfileSectionKey = requestedSection === "support" || requestedSection === "feedback"
-    ? "support"
-    : activeSection;
+  const effectiveSection: ProfileSectionKey =
+    requestedSection === "support" || requestedSection === "feedback"
+      ? "support"
+      : activeSection;
 
-  const applyTheme = (nextDarkMode: boolean) => {
-    const theme = nextDarkMode ? "dark" : "light";
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("Tradonova-theme", theme);
+  const applyTheme = (nextTheme: "light" | "dark") => {
+    setTheme(nextTheme);
+    document.documentElement.dataset.theme = nextTheme;
+    localStorage.setItem("Tradonova-theme", nextTheme);
     window.dispatchEvent(new Event("theme-change"));
-  };
-
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const nextImage = typeof reader.result === "string" ? reader.result : "";
-      setProfileImage(nextImage);
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleLogout = async () => {
     await logoutUser({ redirectTo: "/login" });
   };
 
-  const toggleDarkMode = () => {
-    const nextDarkMode = !darkMode;
-    setDarkMode(nextDarkMode);
-    applyTheme(nextDarkMode);
+  const handlePasswordFieldChange = (field: keyof PasswordForm, value: string) => {
+    setPasswordForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const handlePasswordSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!passwordForm.currentPassword.trim() || !passwordForm.newPassword.trim()) {
+      showAppAlert({
+        title: "Validation Error",
+        text: "Please enter your current password and new password.",
+        type: "error",
+        timer: 2200,
+      });
+      return;
+    }
+
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      showAppAlert({
+        title: "Validation Error",
+        text: "New password and confirm password must match.",
+        type: "error",
+        timer: 2200,
+      });
+      return;
+    }
+
+    const { accessToken, refreshToken } = getStoredAuthTokens();
+
+    if (!accessToken && !refreshToken) {
+      showAppAlert({
+        title: "Error",
+        text: "Your session token is missing. Please log in again.",
+        type: "error",
+        timer: 2400,
+      });
+      return;
+    }
+
+    setPasswordLoading(true);
+
+    try {
+      console.debug("[ProfilePage] Updating password");
+      const response = await fetch(`${getBackendBaseUrl()}/auth/change-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          current_password: passwordForm.currentPassword,
+          new_password: passwordForm.newPassword,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || "Unable to update password.");
+      }
+
+      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+      setIsPasswordEditing(false);
+      showAppAlert({
+        title: "Success",
+        text: data.message || "Password updated successfully.",
+        type: "success",
+        timer: 2400,
+      });
+    } catch (error) {
+      console.error("[ProfilePage] Password update failed", error);
+      showAppAlert({
+        title: "Error",
+        text: error instanceof Error ? error.message : "Unable to update password.",
+        type: "error",
+        timer: 2400,
+      });
+    } finally {
+      setPasswordLoading(false);
+    }
   };
 
   const sectionMap: Record<Exclude<ProfileSectionKey, "profile" | "preferences">, { title: string; body: string[] }> = {
@@ -81,25 +170,6 @@ export default function ProfilePage() {
 
   const renderProfileSection = () => (
     <div className="profile-detail-card">
-      <div className="detail-section-title">Profile photo</div>
-      <div className="photo-row">
-        {profileImage ? (
-          <img src={profileImage} alt="Profile" className="profile-avatar-medium" />
-        ) : (
-          <div className="profile-avatar-medium">
-            {name
-              .split(" ")
-              .map((part) => part[0])
-              .slice(0, 2)
-              .join("") || "U"}
-          </div>
-        )}
-        <button type="button" className="photo-button" onClick={() => fileInputRef.current?.click()}>
-          Change Photo
-        </button>
-        <input ref={fileInputRef} type="file" accept="image/*" className="hidden-file-input" onChange={handleFileChange} />
-      </div>
-
       <div className="detail-row">
         <div className="detail-label">Name</div>
         <div className="detail-value-row">
@@ -127,12 +197,54 @@ export default function ProfilePage() {
 
       <div className="detail-row">
         <div className="detail-label">Password</div>
-        <div className="detail-value-row">
-          <div className="detail-value">••••••••••</div>
-          <button type="button" className="edit-button" onClick={() => navigate("/reset-password")}>
-            Edit
-          </button>
-        </div>
+        {isPasswordEditing ? (
+          <form className="password-edit-form" onSubmit={handlePasswordSubmit}>
+            <input
+              type="password"
+              className="detail-input"
+              placeholder="Current password"
+              value={passwordForm.currentPassword}
+              onChange={(event) => handlePasswordFieldChange("currentPassword", event.target.value)}
+              autoComplete="current-password"
+            />
+            <input
+              type="password"
+              className="detail-input"
+              placeholder="New password"
+              value={passwordForm.newPassword}
+              onChange={(event) => handlePasswordFieldChange("newPassword", event.target.value)}
+              autoComplete="new-password"
+            />
+            <input
+              type="password"
+              className="detail-input"
+              placeholder="Confirm new password"
+              value={passwordForm.confirmPassword}
+              onChange={(event) => handlePasswordFieldChange("confirmPassword", event.target.value)}
+              autoComplete="new-password"
+            />
+            <div className="password-form-actions">
+              <button type="submit" className="edit-button primary" disabled={passwordLoading}>
+                {passwordLoading ? "Saving..." : "Save Password"}
+              </button>
+              <button
+                type="button"
+                className="edit-button"
+                onClick={() => setIsPasswordEditing(false)}
+                disabled={passwordLoading}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="detail-value-row">
+            <div className="detail-value">**********</div>
+            <button type="button" className="edit-button" onClick={() => setIsPasswordEditing(true)}>
+              Edit
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -142,15 +254,22 @@ export default function ProfilePage() {
       <div className="detail-section-title">Preferences</div>
       <div className="detail-row preference-row">
         <div className="detail-label">Theme</div>
-        <div className="detail-value-row preference-switch-row">
-          <div className="detail-value">{darkMode ? "Dark" : "Light"}</div>
+        <div className="theme-choice-group" role="radiogroup" aria-label="Choose theme">
           <button
             type="button"
-            aria-label="Toggle dark mode"
-            className={`theme-toggle-button ${darkMode ? "on" : ""}`}
-            onClick={toggleDarkMode}
+            className={theme === "light" ? "active" : ""}
+            onClick={() => applyTheme("light")}
+            aria-pressed={theme === "light"}
           >
-            <span className="toggle-thumb" />
+            Light
+          </button>
+          <button
+            type="button"
+            className={theme === "dark" ? "active" : ""}
+            onClick={() => applyTheme("dark")}
+            aria-pressed={theme === "dark"}
+          >
+            Dark
           </button>
         </div>
       </div>
@@ -198,28 +317,13 @@ export default function ProfilePage() {
 
   return (
     <main className="profile-page">
-      <Header
-        userName={name}
-        userEmail={email}
-        avatarUrl={profileImage || undefined}
-        onLogout={handleLogout}
-      />
+      <Header userName={name} userEmail={email} onLogout={handleLogout} />
 
       <div className="profile-shell">
         <aside className="profile-sidebar">
           <div className="profile-sidebar-card">
             <div className="profile-avatar-wrap">
-              {profileImage ? (
-                <img src={profileImage} alt="Profile" className="profile-avatar-large" />
-              ) : (
-                <div className="profile-avatar-large">
-                  {name
-                    .split(" ")
-                    .map((part) => part[0])
-                    .slice(0, 2)
-                    .join("") || "U"}
-                </div>
-              )}
+              <div className="profile-avatar-large">{getInitials(name)}</div>
             </div>
 
             <div className="profile-personal-name">{name}</div>
@@ -233,13 +337,13 @@ export default function ProfilePage() {
                 onClick={() => setActiveSection(section.key)}
               >
                 <span>{section.label}</span>
-                <span>›</span>
+                <span>&gt;</span>
               </button>
             ))}
 
             <button type="button" className="profile-side-link profile-side-action danger" onClick={handleLogout}>
               <span>Logout</span>
-              <span>⎋</span>
+              <span>Exit</span>
             </button>
           </div>
         </aside>

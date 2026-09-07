@@ -54,7 +54,8 @@
 }
 
 .stock-table-search,
-.stock-table-filter {
+.stock-table-filter,
+.stock-sector-multiselect summary {
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -65,6 +66,75 @@
   color: var(--dashboard-muted);
   padding: 0 0.75rem;
   min-height: 2.7rem;
+}
+
+.stock-sector-multiselect {
+  position: relative;
+  min-width: 0;
+}
+
+.stock-sector-multiselect summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--dashboard-text);
+}
+
+.stock-sector-multiselect summary::-webkit-details-marker {
+  display: none;
+}
+
+.stock-sector-menu {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: 0;
+  z-index: 20;
+  width: min(18rem, 80vw);
+  max-height: 18rem;
+  overflow: auto;
+  display: grid;
+  gap: 0.15rem;
+  border: 1px solid var(--dashboard-border);
+  border-radius: 8px;
+  background: var(--dashboard-panel-strong);
+  padding: 0.45rem;
+  box-shadow: 0 1rem 2rem var(--dashboard-shadow);
+}
+
+.stock-sector-option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: 6px;
+  color: var(--dashboard-text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0.45rem 0.5rem;
+}
+
+.stock-sector-option:hover {
+  background: rgba(39, 199, 220, 0.08);
+}
+
+.stock-sector-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.stock-sector-option span {
+  width: 1.05rem;
+  height: 1.05rem;
+  border: 1px solid var(--dashboard-border);
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.stock-sector-option span.checked {
+  background: var(--dashboard-accent);
+  color: #061922;
+  border-color: var(--dashboard-accent);
 }
 
 .stock-table-search input,

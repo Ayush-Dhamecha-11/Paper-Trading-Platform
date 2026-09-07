@@ -1,7 +1,8 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowDownWideNarrow,
   ArrowUpNarrowWide,
+  Check,
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
@@ -93,19 +94,37 @@ export default function StockTable({
   visibleRows?: number;
 }>) {
   const [query, setQuery] = useState("");
-  const [sector, setSector] = useState("all");
+  const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
+  const [sectorMenuOpen, setSectorMenuOpen] = useState(false);
   const [sort, setSort] = useState<SortState>({ key: "ticker", direction: "asc" });
+  const sectorMenuRef = useRef<HTMLDetailsElement | null>(null);
 
   const allSectors = useMemo(
     () => Array.from(new Set(stocks.map((stock) => stock.sector))).sort(),
     [stocks]
   );
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        sectorMenuRef.current &&
+        event.target instanceof Node &&
+        !sectorMenuRef.current.contains(event.target)
+      ) {
+        setSectorMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   const filteredStocks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
     const filtered = stocks.filter((stock) => {
-      const matchesSector = sector === "all" || stock.sector === sector;
+      const matchesSector =
+        selectedSectors.length === 0 || selectedSectors.includes(stock.sector);
       const matchesQuery =
         normalizedQuery.length === 0 ||
         stock.ticker.toLowerCase().includes(normalizedQuery) ||
@@ -118,7 +137,15 @@ export default function StockTable({
       const comparison = compareRows(left, right, sort.key);
       return sort.direction === "asc" ? comparison : -comparison;
     });
-  }, [stocks, query, sector, sort]);
+  }, [stocks, query, selectedSectors, sort]);
+
+  const handleSectorToggle = (sectorName: string) => {
+    setSelectedSectors((current) =>
+      current.includes(sectorName)
+        ? current.filter((selectedSector) => selectedSector !== sectorName)
+        : [...current, sectorName]
+    );
+  };
 
   const handleSort = (columnKey: SortKey) => {
     setSort((current) => {
@@ -135,12 +162,15 @@ export default function StockTable({
 
   const handleReset = () => {
     setQuery("");
-    setSector("all");
+    setSelectedSectors([]);
     setSort({ key: "ticker", direction: "asc" });
   };
 
   const hasActiveControls =
-    query.trim().length > 0 || sector !== "all" || sort.key !== "ticker" || sort.direction !== "asc";
+    query.trim().length > 0 ||
+    selectedSectors.length > 0 ||
+    sort.key !== "ticker" ||
+    sort.direction !== "asc";
 
   return (
     <section className="stock-table-panel" aria-labelledby="stock-table-title">
@@ -168,22 +198,55 @@ export default function StockTable({
           />
         </label>
 
-        <label className="stock-table-filter" htmlFor="stock-sector-filter">
-          <SlidersHorizontal size={16} aria-hidden="true" />
-          <span className="sr-only">Filter by sector</span>
-          <select
-            id="stock-sector-filter"
-            value={sector}
-            onChange={(event) => setSector(event.target.value)}
-          >
-            <option value="all">All sectors</option>
-            {allSectors.map((sectorName) => (
-              <option key={sectorName} value={sectorName}>
-                {sectorName}
-              </option>
-            ))}
-          </select>
-        </label>
+        <details
+          ref={sectorMenuRef}
+          className="stock-sector-multiselect"
+          open={sectorMenuOpen}
+          onToggle={(event) => setSectorMenuOpen(event.currentTarget.open)}
+        >
+          <summary onClick={(event) => {
+            event.preventDefault();
+            setSectorMenuOpen((current) => !current);
+          }}>
+            <SlidersHorizontal size={16} aria-hidden="true" />
+            <span>
+              {selectedSectors.length === 0
+                ? "All sectors"
+                : `${selectedSectors.length} sectors`}
+            </span>
+          </summary>
+
+          <div className="stock-sector-menu">
+            <div className="stock-sector-menu-header">
+              <span>Sector filter</span>
+              <button
+                type="button"
+                onClick={() => setSelectedSectors([])}
+                disabled={selectedSectors.length === 0}
+              >
+                Reset
+              </button>
+            </div>
+
+            {allSectors.map((sectorName) => {
+              const isSelected = selectedSectors.includes(sectorName);
+
+              return (
+                <label key={sectorName} className="stock-sector-option">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => handleSectorToggle(sectorName)}
+                  />
+                  <span className={isSelected ? "checked" : ""}>
+                    {isSelected && <Check size={14} aria-hidden="true" />}
+                  </span>
+                  {sectorName}
+                </label>
+              );
+            })}
+          </div>
+        </details>
 
         <label className="stock-table-filter" htmlFor="stock-sort-filter">
           <ChevronsUpDown size={16} aria-hidden="true" />

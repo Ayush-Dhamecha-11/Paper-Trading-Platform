@@ -12,7 +12,7 @@ import {
   type ChartOptions,
 } from "chart.js";
 import { Doughnut, Line } from "react-chartjs-2";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import "./chartUtils.css";
 
 ChartJS.register(
@@ -190,7 +190,7 @@ function allocationDoughnutChartOptions(
   return {
     responsive: true,
     maintainAspectRatio: false,
-    events: ["click"],
+    events: ["mousemove", "mouseout", "touchstart", "touchmove", "touchend"],
     cutout: "58%",
     interaction: {
       mode: "nearest",
@@ -210,7 +210,7 @@ function allocationDoughnutChartOptions(
     animation: {
       duration: 150,
     },
-    onClick: (_, elements) => {
+    onHover: (_, elements) => {
       if (elements.length > 0) {
         const index = elements[0].index;
 
@@ -251,39 +251,6 @@ export function AllocationDoughnutChart({
     number | null
   >(null);
 
-  const doughnutContainerRef =
-    useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const handleDocumentClick = (event: MouseEvent) => {
-      const container =
-        doughnutContainerRef.current;
-
-      if (!container) {
-        return;
-      }
-
-      if (
-        event.target instanceof Node &&
-        !container.contains(event.target)
-      ) {
-        setSelectedIndex(null);
-      }
-    };
-
-    document.addEventListener(
-      "click",
-      handleDocumentClick
-    );
-
-    return () => {
-      document.removeEventListener(
-        "click",
-        handleDocumentClick
-      );
-    };
-  }, []);
-
   const activeSector =
     selectedIndex === null
       ? null
@@ -291,8 +258,9 @@ export function AllocationDoughnutChart({
 
   return (
     <div
-      ref={doughnutContainerRef}
       className="chartjs-shell chartjs-doughnut-shell"
+      onMouseLeave={() => setSelectedIndex(null)}
+      onTouchEnd={() => setSelectedIndex(null)}
     >
       <Doughnut
         data={getAllocationChartData(

@@ -83,8 +83,8 @@ export default function AuthPage({
     "http://localhost:8000"
   ).replace(/\/$/, "");
 
-  const saveAuthToken = (token: string) => {
-    setStoredAuthToken(token);
+  const saveAuthToken = (token: string, refreshToken?: string) => {
+    setStoredAuthToken(token, refreshToken);
     onAuthSuccess?.();
   };
 
@@ -242,7 +242,7 @@ export default function AuthPage({
 
       if (result?.token || result?.access_token || result?.auth_token) {
         const token = result?.token || result?.access_token || result?.auth_token;
-        saveAuthToken(token);
+        saveAuthToken(token, result?.refresh_token);
         return;
       }
 

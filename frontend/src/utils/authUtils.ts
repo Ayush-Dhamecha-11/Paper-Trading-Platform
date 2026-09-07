@@ -16,11 +16,21 @@ export const hasStoredAuth = () =>
       localStorage.getItem(REFRESH_TOKEN_KEY)
   );
 
-export const setStoredAuthToken = (token: string) => {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+export const setStoredAuthToken = (token: string, refreshToken?: string) => {
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  }
+  if (refreshToken) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  }
   localStorage.setItem(AUTH_SESSION_KEY, "1");
   window.dispatchEvent(new CustomEvent("auth-success"));
 };
+
+export const getStoredAuthTokens = () => ({
+  accessToken: localStorage.getItem(AUTH_TOKEN_KEY) || "",
+  refreshToken: localStorage.getItem(REFRESH_TOKEN_KEY) || "",
+});
 
 export const markUserLoggedIn = () => {
   localStorage.setItem(AUTH_SESSION_KEY, "1");

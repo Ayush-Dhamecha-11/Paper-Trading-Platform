@@ -253,8 +253,61 @@
   cursor: pointer;
 }
 
+.edit-button.primary {
+  background: var(--profile-accent);
+  border-color: var(--profile-accent);
+  color: #03180f;
+  font-weight: 800;
+}
+
+.edit-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.password-edit-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.password-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.7rem;
+}
+
 .preference-switch-row {
   align-items: center;
+}
+
+.theme-choice-group {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(6rem, 1fr));
+  gap: 0.3rem;
+  width: min(100%, 18rem);
+  border: 1px solid var(--profile-border);
+  border-radius: 0.8rem;
+  background: var(--profile-input-bg);
+  padding: 0.3rem;
+}
+
+.theme-choice-group button {
+  border: none;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: var(--profile-text-soft);
+  font: inherit;
+  font-weight: 800;
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+}
+
+.theme-choice-group button.active {
+  background: var(--profile-accent);
+  color: #03180f;
 }
 
 .theme-toggle-button {
@@ -300,6 +353,10 @@
 
   .detail-value-row {
     flex-wrap: wrap;
+  }
+
+  .password-edit-form {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -413,5 +470,14 @@
   .edit-button {
     padding: 0.55rem 0.8rem;
     font-size: 0.88rem;
+  }
+
+  .theme-choice-group {
+    width: 100%;
+  }
+
+  .password-form-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

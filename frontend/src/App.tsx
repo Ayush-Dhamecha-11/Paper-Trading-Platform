@@ -4,6 +4,7 @@ import { hasStoredAuth } from "./utils/authUtils";
 import LoginPage from "./pages/login.tsx";
 import SignupPage from "./pages/signup.tsx";
 import DashboardPage from "./pages/dashboard.tsx";
+import AnalyticsPage from "./pages/analytics.tsx";
 import NotFoundPage from "./pages/not-found.tsx";
 import AuthCallbackPage from "./pages/AuthCallbackPage.tsx";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage.tsx";
@@ -73,6 +74,7 @@ function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/login" replace />} />
       <Route path="/dashboard" element={<DashboardGate isAuthenticated={isAuthenticated} />} />
+      <Route path="/analytics" element={isAuthenticated ? <AnalyticsPage /> : <Navigate to="/login" replace />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

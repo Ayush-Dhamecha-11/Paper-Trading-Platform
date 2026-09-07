@@ -46,8 +46,8 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
     cleanUrl.hash = "";
     window.history.replaceState({}, "", cleanUrl.toString());
   }, []);
-  const saveAuthToken = (token: string) => {
-    setStoredAuthToken(token);
+  const saveAuthToken = (token: string, refreshToken?: string) => {
+    setStoredAuthToken(token, refreshToken);
     onAuthSuccess?.();
   };
 
@@ -108,7 +108,7 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
 
       const successText = data.message || "Password updated successfully.";
       const token = data.token || data.access_token || data.refresh_token;
-      saveAuthToken(token);
+      saveAuthToken(token, data.refresh_token);
 
       showAppAlert({
         title: "Success",
