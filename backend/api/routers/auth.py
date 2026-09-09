@@ -1,7 +1,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Depends, Response, Cookie
 from fastapi.responses import RedirectResponse
-from db.supabase_client import supabase
+from db.supabase_client import supabase, admin_supabase
 from api.schemas.auth import (
     RegisterRequest,
     LoginRequest,
@@ -15,18 +15,32 @@ from utils.cookies import set_auth_cookies, clear_auth_cookies
 router = APIRouter(
     prefix="/auth",
     tags=["auth"]
-)
+) 
 
 # REGISTER
 
-@router.post("/register")
 def register(payload: RegisterRequest):
     try:
+        # Check whether email is already registered
+        users = admin_supabase.auth.admin.list_users()
+
+        email_exists = any(
+            user.email and user.email.lower() == payload.email.lower()
+            for user in users
+        )
+
+        if email_exists:
+            raise HTTPException(
+                status_code=409,
+                detail="Email is already registered. Please login."
+            )
+
+        # Register new user
         res = supabase.auth.sign_up({
             "email": payload.email,
             "password": payload.password,
             "options": {
-                "email_redirect_to": "http://127.0.0.1:5173/"
+                "email_redirect_to": "http://localhost:5173/register/callback"
             }
         })
 
@@ -35,9 +49,34 @@ def register(payload: RegisterRequest):
             "user": res.user
         }
 
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
 
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
+
+
+@router.post("/register/callback")
+def register_callback(body: dict, response: Response):
+
+    access_token = body.get("access_token", None)
+    refresh_token = body.get("refresh_token", None) 
+
+    if not access_token or not refresh_token:
+        raise HTTPException(status_code=400, detail="Missing access_token or refresh_token")
+
+    set_auth_cookies(
+        response,
+        access_token,
+        refresh_token,
+    )
+
+    return {
+        "message": "Registration successful",
+    }
 
 # LOGIN
 
@@ -59,8 +98,8 @@ def login(payload: LoginRequest, response: Response):
         )
 
         return {
-            "access_token": res.session.access_token,
-            "refresh_token": res.session.refresh_token,
+            #"access_token": res.session.access_token,
+            #"refresh_token": res.session.refresh_token,
             "user": res.user
         }
 
@@ -98,8 +137,6 @@ def reset_password(payload: ResetPasswordRequest):
 
         return { 
             "message": "Password updated successfully", 
-            "access_token": payload.access_token,
-            "refresh_token": payload.refresh_token   
             }
 
 
@@ -126,7 +163,7 @@ def google_login():
 # GOOGLE OAUTH - CALLBACK
 
 @router.get("/google/callback")
-def google_callback(code: str):
+def google_callback(code: str, response: Response):
     try:
 
         res = supabase.auth.exchange_code_for_session({"auth_code": code})
@@ -137,9 +174,9 @@ def google_callback(code: str):
                 detail="Could not create session"
             )
 
-        frontend_url = "http://localhost:5173/auth/callback"
+        frontend_url = "http://localhost:5173/auth/google/callback"
 
-        response = RedirectResponse(
+        response1 = RedirectResponse(
             url=frontend_url,
             status_code=302,
         )
@@ -151,8 +188,8 @@ def google_callback(code: str):
         )
 
         return {
-            "access_token": res.session.access_token,
-            "refresh_token": res.session.refresh_token,
+            #"access_token": res.session.access_token,
+            #"refresh_token": res.session.refresh_token,
             "user": res.user
         }
 
