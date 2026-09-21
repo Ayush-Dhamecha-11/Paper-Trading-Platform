@@ -29,7 +29,7 @@ function getInitials(name?: string) {
 
 export default function Header({
   userName = "User",
-  userEmail = "user@example.com",
+  userEmail = "--",
   avatarUrl,
   onLogout,
 }: Readonly<HeaderProps>) {
@@ -182,7 +182,7 @@ export default function Header({
                 </button>
                 <button type="button" className="menu-action" onClick={handleHelpSupport}>
                   <span>Help &amp; Support</span>
-                  <span>↗</span>
+                  <span>→</span>
                 </button>
                 <button type="button" className="menu-action danger" onClick={handleLogout}>
                   <span>Logout</span>

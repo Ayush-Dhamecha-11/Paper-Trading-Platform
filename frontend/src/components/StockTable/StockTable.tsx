@@ -95,9 +95,12 @@ export default function StockTable({
 }>) {
   const [query, setQuery] = useState("");
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
+  const [sectorQuery, setSectorQuery] = useState("");
   const [sectorMenuOpen, setSectorMenuOpen] = useState(false);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [sort, setSort] = useState<SortState>({ key: "ticker", direction: "asc" });
   const sectorMenuRef = useRef<HTMLDetailsElement | null>(null);
+  const sortMenuRef = useRef<HTMLDetailsElement | null>(null);
 
   const allSectors = useMemo(
     () => Array.from(new Set(stocks.map((stock) => stock.sector))).sort(),
@@ -113,11 +116,26 @@ export default function StockTable({
       ) {
         setSectorMenuOpen(false);
       }
+
+      if (
+        sortMenuRef.current &&
+        event.target instanceof Node &&
+        !sortMenuRef.current.contains(event.target)
+      ) {
+        setSortMenuOpen(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  const visibleSectors = useMemo(() => {
+    const normalizedSectorQuery = sectorQuery.trim().toLowerCase();
+    return allSectors.filter((sectorName) =>
+      sectorName.toLowerCase().includes(normalizedSectorQuery)
+    );
+  }, [allSectors, sectorQuery]);
 
   const filteredStocks = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -221,14 +239,30 @@ export default function StockTable({
               <span>Sector filter</span>
               <button
                 type="button"
-                onClick={() => setSelectedSectors([])}
+                className="stock-menu-reset"
+                onClick={() => {
+                  setSelectedSectors([]);
+                  setSectorQuery("");
+                }}
                 disabled={selectedSectors.length === 0}
               >
                 Reset
               </button>
             </div>
 
-            {allSectors.map((sectorName) => {
+            <label className="stock-menu-search" htmlFor="sector-search">
+              <Search size={14} aria-hidden="true" />
+              <span className="sr-only">Search sectors</span>
+              <input
+                id="sector-search"
+                type="search"
+                placeholder="Search sectors"
+                value={sectorQuery}
+                onChange={(event) => setSectorQuery(event.target.value)}
+              />
+            </label>
+
+            {visibleSectors.map((sectorName) => {
               const isSelected = selectedSectors.includes(sectorName);
 
               return (
@@ -245,29 +279,51 @@ export default function StockTable({
                 </label>
               );
             })}
+
+            {visibleSectors.length === 0 && (
+              <p className="stock-menu-empty">No sectors found.</p>
+            )}
           </div>
         </details>
 
-        <label className="stock-table-filter" htmlFor="stock-sort-filter">
-          <ChevronsUpDown size={16} aria-hidden="true" />
-          <span className="sr-only">Sort by</span>
-          <select
-            id="stock-sort-filter"
-            value={sort.key}
-            onChange={(event) =>
-              setSort((current) => ({
-                ...current,
-                key: event.target.value as SortKey,
-              }))
-            }
-          >
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.key} value={option.key}>
-                Sort by {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <details
+          ref={sortMenuRef}
+          className="stock-sort-select"
+          open={sortMenuOpen}
+          onToggle={(event) => setSortMenuOpen(event.currentTarget.open)}
+        >
+          <summary onClick={(event) => {
+            event.preventDefault();
+            setSortMenuOpen((current) => !current);
+          }}>
+            <ChevronsUpDown size={16} aria-hidden="true" />
+            <span>Sort by {SORT_OPTIONS.find((option) => option.key === sort.key)?.label}</span>
+          </summary>
+
+          <div className="stock-sort-menu" role="listbox" aria-label="Sort by">
+            <div className="stock-sort-menu-header">Sort by</div>
+            {SORT_OPTIONS.map((option) => {
+              const isSelected = sort.key === option.key;
+
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  className={`stock-sort-option${isSelected ? " selected" : ""}`}
+                  onClick={() => {
+                    setSort((current) => ({ ...current, key: option.key }));
+                    setSortMenuOpen(false);
+                  }}
+                  role="option"
+                  aria-selected={isSelected}
+                >
+                  <span>{option.label}</span>
+                  {isSelected && <Check size={14} aria-hidden="true" />}
+                </button>
+              );
+            })}
+          </div>
+        </details>
 
         <div className="stock-sort-direction" aria-label="Sort direction">
           <button

@@ -77,8 +77,11 @@
 //     </div>
 //   );
 // }
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { authenticatedFetch, logBackendResponse, markUserLoggedIn } from "../utils/authUtils";
+import { showAuthNotice } from "../utils/authNotice";
+import { warmDashboardData } from "../utils/dashboardPrefetch";
 
 const backendBaseUrl = String(
   import.meta.env.VITE_BACKEND_URL ||
@@ -88,8 +91,14 @@ const backendBaseUrl = String(
 
 export default function AuthCallbackPage() {
   const navigate = useNavigate();
+  const hasProcessedCallback = useRef(false);
 
   useEffect(() => {
+    if (hasProcessedCallback.current) {
+      return;
+    }
+
+    hasProcessedCallback.current = true;
     const processAuthentication = async () => {
       try {
         const hash = window.location.hash.startsWith("#")
@@ -126,32 +135,34 @@ export default function AuthCallbackPage() {
             errorCode ||
             "Authentication failed. Please try again.";
 
-          window.sessionStorage.setItem(
-            "auth_notice",
-            JSON.stringify({
-              text: decodeURIComponent(message),
-              type: "error",
-            })
-          );
+          // window.sessionStorage.setItem(
+          //   "auth_notice",
+          //   JSON.stringify({
+          //     text: decodeURIComponent(message),
+          //     type: "error",
+          //   })
+          // );
+          showAuthNotice(decodeURIComponent(message), "error");
 
           navigate("/login", { replace: true });
           return;
         }
 
         if (!accessToken || !refreshToken) {
-          window.sessionStorage.setItem(
-            "auth_notice",
-            JSON.stringify({
-              text: "Authentication failed. Please try again.",
-              type: "error",
-            })
-          );
+          // window.sessionStorage.setItem(
+          //   "auth_notice",
+          //   JSON.stringify({
+          //     text: "Authentication failed. Please try again.",
+          //     type: "error",
+          //   })
+          // );
+          showAuthNotice("Authentication failed. Please try again.", "error");
 
           navigate("/login", { replace: true });
           return;
         }
 
-        const response = await fetch(
+        const response = await authenticatedFetch(
           `${backendBaseUrl}/auth/register/callback`,
           {
             method: "POST",
@@ -167,6 +178,8 @@ export default function AuthCallbackPage() {
           }
         );
 
+        logBackendResponse(response, "POST /auth/register/callback");
+
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
@@ -177,19 +190,20 @@ export default function AuthCallbackPage() {
           );
         }
 
-        window.sessionStorage.setItem(
-          "auth_notice",
-          JSON.stringify({
-            text:
-              data.message ||
-              "Account created successfully.",
-            type: "success",
-          })
-        );
+        markUserLoggedIn();
+        void warmDashboardData();
 
-        window.dispatchEvent(
-          new CustomEvent("auth-success")
-        );
+        // window.sessionStorage.setItem(
+        //   "auth_notice",
+        //   JSON.stringify({
+        //     text:
+        //       data.message ||
+        //       "Account created successfully.",
+        //     type: "success",
+        //   })
+        // );
+
+        showAuthNotice(data.message || "Account created successfully.", "success");
 
         navigate("/dashboard", { replace: true });
       } catch (error) {
@@ -198,13 +212,14 @@ export default function AuthCallbackPage() {
             ? error.message
             : "Authentication failed. Please try again.";
 
-        window.sessionStorage.setItem(
-          "auth_notice",
-          JSON.stringify({
-            text: message,
-            type: "error",
-          })
-        );
+        // window.sessionStorage.setItem(
+        //   "auth_notice",
+        //   JSON.stringify({
+        //     text: message,
+        //     type: "error",
+        //   })
+        // );
+        showAuthNotice(message, "error");
 
         navigate("/login", { replace: true });
       }

@@ -12,6 +12,9 @@ const compactInrFormatter = new Intl.NumberFormat("en-IN", {
 });
 
 export function formatCurrency(value: number): string {
+  if(value == null || isNaN(value)) {
+    return "--";
+  }
   return inrFormatter.format(value);
 }
 

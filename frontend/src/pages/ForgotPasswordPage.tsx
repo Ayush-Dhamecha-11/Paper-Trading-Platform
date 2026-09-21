@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { showAppAlert } from "../utils/alertConfig";
+import { authenticatedFetch, logBackendResponse } from "../utils/authUtils";
 import "../pages_css/login.css";
 
 const backendBaseUrl = String(
@@ -30,14 +31,16 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${backendBaseUrl}/auth/forgot-password`, {
+      const response = await authenticatedFetch(`${backendBaseUrl}/auth/forgot-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
+        credentials: "include",
         body: JSON.stringify({ email:email }),
       });
+      logBackendResponse(response, "POST /auth/forgot-password");
 
       const data = await response.json().catch(() => ({}));
 

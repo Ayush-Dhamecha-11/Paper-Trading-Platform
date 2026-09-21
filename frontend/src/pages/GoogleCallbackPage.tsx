@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { showAppAlert } from "../utils/alertConfig";
-import { markUserLoggedIn } from "../utils/authUtils.ts";
+import { showAuthNotice } from "../utils/authNotice";
+import { authenticatedFetch, logBackendResponse, markUserLoggedIn } from "../utils/authUtils.ts";
+import { warmDashboardData } from "../utils/dashboardPrefetch";
 const backendBaseUrl = String(
   import.meta.env.VITE_BACKEND_URL ||
     import.meta.env.BACKEND_URL ||
@@ -26,12 +27,7 @@ export default function GoogleCallbackPage() {
 
     if (!code) {
       const message = "Google login failed. Please try again.";
-      showAppAlert({
-        title: "Error",
-        text: message,
-        type: "error",
-        timer: 2400,
-      });
+      showAuthNotice(message, "error");
       navigate("/login", { replace: true });
       return;
     }
@@ -44,7 +40,7 @@ export default function GoogleCallbackPage() {
 
     const finalizeLogin = async () => {
       try {
-        const response = await fetch(
+        const response = await authenticatedFetch(
           `${backendBaseUrl}/auth/google/callback?code=${encodeURIComponent(code)}`,
           {
             method: "GET",
@@ -54,6 +50,8 @@ export default function GoogleCallbackPage() {
             credentials: "include",
           }
         );
+
+        logBackendResponse(response, "GET /auth/google/callback");
 
         const data = await response
           .json()
@@ -69,12 +67,7 @@ export default function GoogleCallbackPage() {
 
         const successText = data.message || "Google login successful.";
 
-        showAppAlert({
-          title: "Success",
-          text: successText,
-          type: "success",
-          timer: 2200,
-        });
+        showAuthNotice(successText, "success");
 
         // const cleanUrl = new URL(
         //   window.location.href
@@ -92,6 +85,7 @@ export default function GoogleCallbackPage() {
         //   new CustomEvent("auth-success")
         // );
         markUserLoggedIn();
+        void warmDashboardData();
 
         navigate("/dashboard", {
           replace: true,
@@ -103,12 +97,7 @@ export default function GoogleCallbackPage() {
             : "Google login failed.";
 
         setStatusText(message);
-        showAppAlert({
-          title: "Error",
-          text: message,
-          type: "error",
-          timer: 2400,
-        });
+        showAuthNotice(message, "error");
 
         navigate("/login", {
           replace: true,

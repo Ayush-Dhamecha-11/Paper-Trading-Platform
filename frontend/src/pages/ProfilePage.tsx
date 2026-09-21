@@ -1,8 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Header from "../components/Header";
 import { showAppAlert } from "../utils/alertConfig";
-import { getBackendBaseUrl, getStoredAuthTokens, logoutUser } from "../utils/authUtils";
+import {
+  getBackendBaseUrl,
+  authenticatedFetch,
+  getStoredUserInfo,
+  logBackendResponse,
+  logoutUser,
+  setStoredUserInfo,
+  type StoredUserInfo,
+} from "../utils/authUtils";
 import "../pages_css/profile.css";
 
 const profileSections = [
@@ -21,6 +29,10 @@ type PasswordForm = {
 };
 
 function getInitials(name: string) {
+  if (!name || name === "--") {
+    return "U";
+  }
+
   return (
     name
       .split(" ")
@@ -31,15 +43,17 @@ function getInitials(name: string) {
 }
 
 export default function ProfilePage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const savedTheme = localStorage.getItem("Tradonova-theme");
     return savedTheme === "light" ? "light" : "dark";
   });
   const [autoTrade, setAutoTrade] = useState(false);
-  const [name, setName] = useState("Jenil Shah");
-  const [email, setEmail] = useState("jenilshah740@gmail.com");
+  const [preferenceSaving, setPreferenceSaving] = useState(false);
+  const [name, setName] = useState("--");
+  const [email, setEmail] = useState("--");
   const [isEditing, setIsEditing] = useState(false);
+  const [nameSaving, setNameSaving] = useState(false);
   const [isPasswordEditing, setIsPasswordEditing] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordForm, setPasswordForm] = useState<PasswordForm>({
@@ -49,21 +63,205 @@ export default function ProfilePage() {
   });
   const [activeSection, setActiveSection] = useState<ProfileSectionKey>("profile");
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const storedUserInfo = getStoredUserInfo();
+
+    const applyUserInfo = (userInfo: StoredUserInfo) => {
+      if (!isMounted) {
+        return;
+      }
+
+      setName(userInfo.name?.trim() || "--");
+      setEmail(userInfo.email?.trim() || "--");
+      setAutoTrade(userInfo.auto_trade ?? false);
+
+    };
+
+    if (storedUserInfo) {
+      applyUserInfo(storedUserInfo);
+    }
+
+    const refreshProfile = () => authenticatedFetch(`${getBackendBaseUrl()}/api/profile`, {
+      credentials: "include",
+    })
+      .then(async (response) => {
+        logBackendResponse(response, "GET /api/profile");
+        if (!response.ok) {
+          throw new Error("Unable to load user information.");
+        }
+
+        return (await response.json()) as {
+          name?: string;
+          email?: string;
+          preference?: StoredUserInfo;
+        };
+      })
+      .then((profile) => {
+        const userInfo: StoredUserInfo = {
+          name: profile.name,
+          email: profile.email,
+          theme: profile.preference?.theme,
+          auto_trade: profile.preference?.auto_trade,
+        };
+
+        setStoredUserInfo(userInfo);
+        applyUserInfo(userInfo);
+      })
+      .catch(() => {
+        applyUserInfo(storedUserInfo ?? {});
+      });
+
+    void refreshProfile();
+
+    const refreshTimer = window.setInterval(() => {
+      void refreshProfile();
+    }, 60_000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(refreshTimer);
+    };
+  }, []);
+
   const requestedSection = searchParams.get("section");
+
   const effectiveSection: ProfileSectionKey =
     requestedSection === "support" || requestedSection === "feedback"
       ? "support"
       : activeSection;
 
-  const applyTheme = (nextTheme: "light" | "dark") => {
-    setTheme(nextTheme);
-    document.documentElement.dataset.theme = nextTheme;
-    localStorage.setItem("Tradonova-theme", nextTheme);
-    window.dispatchEvent(new Event("theme-change"));
+  const savePreferences = async (
+    nextTheme: "light" | "dark",
+    nextAutoTrade: boolean,
+    previousTheme: "light" | "dark",
+    previousAutoTrade: boolean,
+  ) => {
+    if (preferenceSaving) {
+      return;
+    }
+
+    setPreferenceSaving(true);
+
+    try {
+      const response = await authenticatedFetch(`${getBackendBaseUrl()}/api/preferences`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          theme: nextTheme === "light" ? "Light" : "Dark",
+          auto_trade: nextAutoTrade,
+        }),
+      });
+
+      logBackendResponse(response, "POST /preferences");
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || "Unable to update preferences.");
+      }
+
+      setTheme(nextTheme);
+      setAutoTrade(nextAutoTrade);
+      document.documentElement.dataset.theme = nextTheme;
+      localStorage.setItem("Tradonova-theme", nextTheme);
+      window.dispatchEvent(new Event("theme-change"));
+
+      const storedUserInfo = getStoredUserInfo() ?? {};
+      setStoredUserInfo({
+        ...storedUserInfo,
+        theme: nextTheme === "light" ? "Light" : "Dark",
+        auto_trade: nextAutoTrade,
+      });
+    } catch (error) {
+      setTheme(previousTheme);
+      setAutoTrade(previousAutoTrade);
+      document.documentElement.dataset.theme = previousTheme;
+      localStorage.setItem("Tradonova-theme", previousTheme);
+      window.dispatchEvent(new Event("theme-change"));
+      showAppAlert({
+        title: "Error",
+        text: error instanceof Error ? error.message : "Unable to update preferences.",
+        type: "error",
+        timer: 2400,
+      });
+    } finally {
+      setPreferenceSaving(false);
+    }
+  };
+
+  const handleThemeChange = (nextTheme: "light" | "dark") => {
+    void savePreferences(nextTheme, autoTrade, theme, autoTrade);
+  };
+
+  const handleAutoTradeChange = () => {
+    void savePreferences(theme, !autoTrade, theme, autoTrade);
   };
 
   const handleLogout = async () => {
     await logoutUser({ redirectTo: "/login" });
+  };
+
+  const handleNameSave = async () => {
+    const nextName = name.trim();
+
+    if (!nextName || nextName === "--") {
+      showAppAlert({
+        title: "Validation Error",
+        text: "Please enter a valid name.",
+        type: "error",
+        timer: 2200,
+      });
+      return;
+    }
+
+    setNameSaving(true);
+
+    try {
+      const response = await authenticatedFetch(`${getBackendBaseUrl()}/api/name`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ new_name: nextName }),
+      });
+
+      logBackendResponse(response, "POST /api/name");
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || "Unable to update your name.");
+      }
+
+      const storedUserInfo = getStoredUserInfo() ?? {};
+      setStoredUserInfo({ ...storedUserInfo, name: nextName });
+      setName(nextName);
+      setIsEditing(false);
+      showAppAlert({
+        title: "Success",
+        text: data.message || "Name updated successfully.",
+        type: "success",
+        timer: 2200,
+      });
+    } catch (error) {
+      showAppAlert({
+        title: "Error",
+        text: error instanceof Error ? error.message : "Unable to update your name.",
+        type: "error",
+        timer: 2400,
+      });
+    } finally {
+      setNameSaving(false);
+    }
   };
 
   const handlePasswordFieldChange = (field: keyof PasswordForm, value: string) => {
@@ -93,37 +291,36 @@ export default function ProfilePage() {
       return;
     }
 
-    const { accessToken, refreshToken } = getStoredAuthTokens();
+    // const { accessToken, refreshToken } = getStoredAuthTokens();
 
-    if (!accessToken && !refreshToken) {
-      showAppAlert({
-        title: "Error",
-        text: "Your session token is missing. Please log in again.",
-        type: "error",
-        timer: 2400,
-      });
-      return;
-    }
+    // if (!accessToken && !refreshToken) {
+    //   showAppAlert({
+    //     title: "Error",
+    //     text: "Your session token is missing. Please log in again.",
+    //     type: "error",
+    //     timer: 2400,
+    //   });
+    //   return;
+    // }
 
     setPasswordLoading(true);
 
     try {
       console.debug("[ProfilePage] Updating password");
-      const response = await fetch(`${getBackendBaseUrl()}/auth/change-password`, {
+      const response = await authenticatedFetch(`${getBackendBaseUrl()}/api/password`, {
+        credentials: "include",
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        credentials: "include",
         body: JSON.stringify({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-          current_password: passwordForm.currentPassword,
+          old_password: passwordForm.currentPassword,
           new_password: passwordForm.newPassword,
         }),
       });
 
+      logBackendResponse(response, "POST /api/password");
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
@@ -168,6 +365,13 @@ export default function ProfilePage() {
     },
   };
 
+  let nameActionLabel = "Edit";
+  if (nameSaving) {
+    nameActionLabel = "Saving...";
+  } else if (isEditing) {
+    nameActionLabel = "Done";
+  }
+
   const renderProfileSection = () => (
     <div className="profile-detail-card">
       <div className="detail-row">
@@ -178,8 +382,20 @@ export default function ProfilePage() {
           ) : (
             <div className="detail-value">{name}</div>
           )}
-          <button type="button" className="edit-button" onClick={() => setIsEditing((prev) => !prev)}>
-            {isEditing ? "Done" : "Edit"}
+          <button
+            type="button"
+            className="edit-button"
+            onClick={() => {
+              if (isEditing) {
+                void handleNameSave();
+                return;
+              }
+
+              setIsEditing(true);
+            }}
+            disabled={nameSaving}
+          >
+            {nameActionLabel}
           </button>
         </div>
       </div>
@@ -258,16 +474,18 @@ export default function ProfilePage() {
           <button
             type="button"
             className={theme === "light" ? "active" : ""}
-            onClick={() => applyTheme("light")}
+            onClick={() => handleThemeChange("light")}
             aria-pressed={theme === "light"}
+            disabled={preferenceSaving}
           >
             Light
           </button>
           <button
             type="button"
             className={theme === "dark" ? "active" : ""}
-            onClick={() => applyTheme("dark")}
+            onClick={() => handleThemeChange("dark")}
             aria-pressed={theme === "dark"}
+            disabled={preferenceSaving}
           >
             Dark
           </button>
@@ -282,7 +500,8 @@ export default function ProfilePage() {
             type="button"
             aria-label="Toggle auto trade"
             className={`theme-toggle-button ${autoTrade ? "on" : ""}`}
-            onClick={() => setAutoTrade((prev) => !prev)}
+            onClick={handleAutoTradeChange}
+            disabled={preferenceSaving}
           >
             <span className="toggle-thumb" />
           </button>
@@ -334,7 +553,10 @@ export default function ProfilePage() {
                 key={section.key}
                 type="button"
                 className={`profile-side-link ${effectiveSection === section.key ? "active" : ""}`}
-                onClick={() => setActiveSection(section.key)}
+                onClick={() => {
+                  setActiveSection(section.key);
+                  setSearchParams({});
+                }}
               >
                 <span>{section.label}</span>
                 <span>&gt;</span>

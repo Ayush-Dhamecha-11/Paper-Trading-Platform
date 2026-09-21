@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { showAppAlert } from "../utils/alertConfig";
-import { setStoredAuthToken } from "../utils/authUtils";
+import {
+  authenticatedFetch,
+  logBackendResponse,
+  setStoredAuthToken,
+} from "../utils/authUtils";
 import "../pages_css/login.css";
 
 const backendBaseUrl = String(
@@ -87,18 +91,20 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
     setLoading(true);
 
     try {
-      const response = await fetch(`${backendBaseUrl}/auth/reset-password`, {
+      const response = await authenticatedFetch(`${backendBaseUrl}/auth/reset-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
+        credentials: "include",
         body: JSON.stringify({
           access_token: resetTokens.accessToken,
           refresh_token: resetTokens.refreshToken,
           new_password: password,
         }),
       });
+      logBackendResponse(response, "POST /auth/reset-password");
 
       const data = await response.json().catch(() => ({}));
 

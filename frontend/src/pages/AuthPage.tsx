@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PasswordField from "../components/PasswordField";
-import { showAppAlert } from "../utils/alertConfig";
-import { markUserLoggedIn, setStoredAuthToken } from "../utils/authUtils";
+import { showAuthNotice } from "../utils/authNotice";
+import {
+  logBackendResponse,
+  markUserLoggedIn,
+  setStoredAuthToken,
+} from "../utils/authUtils";
+import { warmDashboardData } from "../utils/dashboardPrefetch";
 import "../pages_css/login.css";
 
 type AuthMode = "login" | "signup";
@@ -42,38 +47,28 @@ export default function AuthPage({
     localStorage.setItem("Tradonova-theme", theme);
   }, [theme]);
 
-  const normalizeNoticeText = (text: string, type: "success" | "error" = "success") => {
-    const value = String(text ?? "").trim();
+  useEffect(() => {
+    const storedNotice = window.sessionStorage.getItem("auth_notice");
 
-    if (!value) {
-      return type === "success" ? "Action completed successfully." : "Something went wrong. Please try again.";
+    if (!storedNotice) {
+      return;
     }
 
-    const cleaned = value
-      .replace(/auth_code\s*[:=][^,\n]+/gi, "")
-      .replace(/code_verifier\s*[:=][^,\n]+/gi, "")
-      .replace(/\s{2,}/g, " ")
-      .replace(/,$/, "")
-      .trimEnd();
+    window.sessionStorage.removeItem("auth_notice");
 
-    if (!cleaned || /auth_code|code_verifier/i.test(value)) {
-      return type === "success" ? "Google login successful." : "Authentication failed. Please try again.";
+    try {
+      const notice = JSON.parse(storedNotice) as {
+        text?: string;
+        type?: "success" | "error";
+      };
+
+      if (notice.text) {
+        showAuthNotice(notice.text, notice.type === "error" ? "error" : "success");
+      }
+    } catch {
+      // Ignore malformed stored notices.
     }
-
-    return cleaned;
-  };
-
-  const showNotice = (text: string, type: "success" | "error" = "success") => {
-    const nextText = normalizeNoticeText(text, type);
-    window.sessionStorage.setItem("auth_notice", JSON.stringify({ text: nextText, type }));
-
-    showAppAlert({
-      title: type === "success" ? "Success" : "Error",
-      text: nextText,
-      type,
-      timer: 2400,
-    });
-  };
+  }, []);
 
   const isLogin = mode === "login";
 
@@ -139,6 +134,7 @@ export default function AuthPage({
       });
 
       return fetch(queryUrl.toString(), requestOptions).then(async (response) => {
+        logBackendResponse(response, `${method} ${normalizedEndpoint}`);
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
@@ -150,6 +146,7 @@ export default function AuthPage({
     }
 
     const response = await fetch(url, requestOptions);
+    logBackendResponse(response, `${method} ${normalizedEndpoint}`);
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
@@ -204,10 +201,13 @@ export default function AuthPage({
 
       if (response.message) {
         setError("");
-        showNotice(response.message, "success");
+        showAuthNotice(response.message, "success");
       }
 
-      markLoggedIn();
+      if (isLogin) {
+        markLoggedIn();
+        void warmDashboardData();
+      }
 
       console.log(isLogin ? "Login:" : "Sign up:", response);
     } catch (requestError) {
