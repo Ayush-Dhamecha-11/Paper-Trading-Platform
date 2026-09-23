@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { applyTheme, getStoredTheme } from "../utils/themeUtils";
 import "./Header.css";
 
 const navItems = [
@@ -7,11 +8,6 @@ const navItems = [
   { label: "Analytics", path: "/analytics" },
   { label: "Portfolio", path: "/portfolio" },
 ] as const;
-
-const getStoredTheme = () => {
-  const savedTheme = localStorage.getItem("Tradonova-theme");
-  return savedTheme === "light" ? "light" : "dark";
-};
 
 type HeaderProps = {
   userName?: string;
@@ -60,6 +56,12 @@ export default function Header({
       window.removeEventListener("theme-change", handleThemeChange);
     };
   }, []);
+
+  // Apply data-theme attribute to <html> so [data-theme="light/dark"] CSS selectors work
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
 
   const handleLogout = () => {
     setUserMenuOpen(false);

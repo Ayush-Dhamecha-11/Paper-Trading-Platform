@@ -1,0 +1,114 @@
+/* =====================================================================
+   TradeFAB — Floating Action Button
+   Works with both [data-theme="dark"] (default) and [data-theme="light"]
+   ===================================================================== */
+
+.trade-fab {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  z-index: 200;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+
+  /* Pill shape */
+  border: none;
+  border-radius: 999px;
+  padding: 0.85rem 1.4rem 0.85rem 1.1rem;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  line-height: 1;
+
+  /* Dark-mode default */
+  background: linear-gradient(135deg, #27c7dc, #1a9db5);
+  color: #051820;
+  box-shadow:
+    0 0 0 3px rgba(39, 199, 220, 0.18),
+    0 8px 24px rgba(39, 199, 220, 0.3),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background 0.18s ease;
+  will-change: transform;
+}
+
+.trade-fab:hover {
+  background: linear-gradient(135deg, #3dd6ec, #1fb9d4);
+  transform: translateY(-2px) scale(1.03);
+  box-shadow:
+    0 0 0 4px rgba(39, 199, 220, 0.22),
+    0 12px 30px rgba(39, 199, 220, 0.38),
+    0 4px 10px rgba(0, 0, 0, 0.22);
+}
+
+.trade-fab:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.trade-fab-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.12);
+  flex-shrink: 0;
+}
+
+.trade-fab-label {
+  font-size: 0.97rem;
+}
+
+/* Light theme */
+[data-theme="light"] .trade-fab {
+  background: linear-gradient(135deg, #1094a8, #0d7d92);
+  color: #ffffff;
+  box-shadow:
+    0 0 0 3px rgba(16, 148, 168, 0.15),
+    0 8px 24px rgba(16, 148, 168, 0.28),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .trade-fab:hover {
+  background: linear-gradient(135deg, #1aacbf, #1090a6);
+  box-shadow:
+    0 0 0 4px rgba(16, 148, 168, 0.2),
+    0 12px 30px rgba(16, 148, 168, 0.36),
+    0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .trade-fab-icon {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Mobile: smaller, icon-only at very small screens */
+@media (max-width: 480px) {
+  .trade-fab {
+    bottom: 1.2rem;
+    right: 1.2rem;
+    padding: 1rem;
+    border-radius: 50%;
+    width: 3.4rem;
+    height: 3.4rem;
+    justify-content: center;
+  }
+
+  .trade-fab-label {
+    display: none;
+  }
+
+  .trade-fab-icon {
+    background: transparent;
+    width: auto;
+    height: auto;
+  }
+}

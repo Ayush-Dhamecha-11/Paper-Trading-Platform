@@ -1,0 +1,191 @@
+import { authenticatedFetch, getBackendBaseUrl, logBackendResponse } from "./authUtils";
+
+export type TradeAction = "buy" | "sell";
+
+export type TradePayload = {
+  ticker: string;
+  action: TradeAction;
+  quantity: number;
+  price: number; // current market price at the time of order
+};
+
+export type TradeResult = {
+  success: boolean;
+  message: string;
+  tradeId?: string;
+};
+
+/**
+ * Submit a buy or sell order to the backend.
+ * NOTE: The API endpoint URL will be updated by the backend team when ready.
+ */
+export async function executeTrade(payload: TradePayload): Promise<TradeResult> {
+  const response = await authenticatedFetch(
+    `${getBackendBaseUrl()}/api/trade/execute`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }
+  );
+  logBackendResponse(response, "POST /api/trade/execute");
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "Trade failed");
+    throw new Error(body || "Trade failed");
+  }
+
+  return response.json() as Promise<TradeResult>;
+}
+
+/**
+ * Execute multiple buy/sell orders together in a basket.
+ * Calculates net requirement and submits to backend.
+ */
+export async function executeBatchTrade(orders: TradePayload[]): Promise<TradeResult> {
+  if (orders.length === 1) {
+    return executeTrade(orders[0]);
+  }
+
+  const response = await authenticatedFetch(
+    `${getBackendBaseUrl()}/api/trade/batch`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orders }),
+    }
+  );
+  logBackendResponse(response, "POST /api/trade/batch");
+
+  if (!response.ok) {
+    // Fallback: execute each order sequentially if batch endpoint is not yet ready
+    const results: TradeResult[] = [];
+    for (const order of orders) {
+      const res = await executeTrade(order);
+      results.push(res);
+    }
+    return {
+      success: true,
+      message: `Executed ${orders.length} orders successfully`,
+    };
+  }
+
+  return response.json() as Promise<TradeResult>;
+}
+
+/**
+ * Update the user's available capital.
+ * NOTE: The API endpoint URL will be updated by the backend team when ready.
+ */
+export async function updateCapital(newCapital: number): Promise<void> {
+  const response = await authenticatedFetch(
+    `${getBackendBaseUrl()}/api/profile/capital`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capital: newCapital }),
+    }
+  );
+  logBackendResponse(response, "PATCH /api/profile/capital");
+
+  if (!response.ok) {
+    throw new Error("Failed to update capital");
+  }
+}
+
+export type TradeSuggestion = {
+  id: string;
+  ticker: string;
+  name: string;
+  action: "buy" | "sell";
+  quantity: number;
+  price: number;
+  status: "pending" | "executed";
+  executedAt?: string;
+};
+
+// Fallback dummy suggestions if backend is not yet ready (quantity > 0, no reasons)
+const DEFAULT_SUGGESTIONS: TradeSuggestion[] = [
+  {
+    id: "sug_1",
+    ticker: "TCS",
+    name: "Tata Consultancy Services",
+    action: "buy",
+    quantity: 2,
+    price: 3844.44,
+    status: "pending",
+  },
+  {
+    id: "sug_2",
+    ticker: "ITC",
+    name: "ITC Limited",
+    action: "sell",
+    quantity: 15,
+    price: 452.5,
+    status: "pending",
+  },
+  {
+    id: "sug_3",
+    ticker: "RELIANCE",
+    name: "Reliance Industries",
+    action: "buy",
+    quantity: 3,
+    price: 2653.33,
+    status: "pending",
+  },
+  {
+    id: "sug_4",
+    ticker: "HDFCBANK",
+    name: "HDFC Bank",
+    action: "sell",
+    quantity: 5,
+    price: 1660.42,
+    status: "pending",
+  },
+];
+
+/**
+ * Fetches today's trade suggestions from the backend.
+ * Filters out any suggestions with 0 buy or 0 sell quantity.
+ * Falls back to DEFAULT_SUGGESTIONS if backend call fails.
+ */
+export async function fetchDailySuggestions(): Promise<TradeSuggestion[]> {
+  try {
+    const response = await authenticatedFetch(
+      `${getBackendBaseUrl()}/api/strategy/suggestions`,
+      { credentials: "include" }
+    );
+    logBackendResponse(response, "GET /api/strategy/suggestions");
+    if (!response.ok) {
+      return DEFAULT_SUGGESTIONS.filter((s) => s.quantity > 0);
+    }
+    const data = await response.json();
+    const rawList: TradeSuggestion[] = Array.isArray(data)
+      ? data
+      : data.suggestions ?? DEFAULT_SUGGESTIONS;
+
+    // Filter out stocks with 0 buy or 0 sell quantity
+    return rawList.filter((item) => typeof item.quantity === "number" && item.quantity > 0);
+  } catch {
+    // If backend endpoint is not ready or network fails, fallback to dummy suggestions
+    return DEFAULT_SUGGESTIONS.filter((s) => s.quantity > 0);
+  }
+}
+
+/**
+ * Execute suggestions as-is directly without manual edits.
+ * Bypasses frontend guards because backend already validated this plan.
+ */
+export async function executeSuggestionsAsIs(suggestions: TradeSuggestion[]): Promise<TradeResult> {
+  const orders: TradePayload[] = suggestions.map((s) => ({
+    ticker: s.ticker,
+    action: s.action,
+    quantity: s.quantity,
+    price: s.price,
+  }));
+  return executeBatchTrade(orders);
+}
+

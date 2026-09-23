@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import DataState from "../components/DataState";
 import Header from "../components/Header";
-// import { AllocationDoughnutChart, ProfitLineChart, type ChartRangeKey } from "../utils/chartUtils";
 import StockTable from "../components/StockTable/StockTable";
 import { STOCK_UNIVERSE, type Stock } from "../data/stocksData";
 import {
@@ -19,6 +18,8 @@ import {
 } from "../utils/dataCache";
 import { fetchDashboardStocks } from "../utils/dashboardPrefetch";
 import { formatCurrency } from "../utils/formatters";
+import { useTradeModal } from "../context/TradeContext";
+import StrategyBanner from "../components/StrategyBanner/StrategyBanner";
 import "../pages_css/dashboard.css";
 
 /*
@@ -192,6 +193,7 @@ export function DashboardHoldingsTable() {
 }
 
 function DashboardPage() {
+  const { openTrade } = useTradeModal();
   // const notice = (() => {
   //   const savedNotice = window.sessionStorage.getItem("auth_notice");
 
@@ -389,8 +391,11 @@ function DashboardPage() {
       <StockTable
         stocks={stocks}
         title="Available Stocks"
-        subtitle="Search, filter and sort the full NSE stock universe"
+        subtitle="Click any row to trade · Search, filter and sort the full NSE stock universe"
         visibleRows={8}
+        onRowClick={(stock) =>
+          openTrade({ ticker: stock.ticker, name: stock.name, price: stock.price })
+        }
       />
     );
   }
@@ -448,6 +453,9 @@ function DashboardPage() {
             <small>{summaryLoading ? "Fetching latest data" : "Net realized + unrealized"}</small>
           </div>
         </section>
+
+        {/* Daily Strategy & Auto-Trade Desk */}
+        <StrategyBanner />
 
         <section className="dashboard-stock-section">
           {stockContent}

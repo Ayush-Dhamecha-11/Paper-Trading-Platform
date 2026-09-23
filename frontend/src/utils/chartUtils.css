@@ -147,23 +147,17 @@
 @media (max-width: 640px) {
   .chartjs-line-shell {
     height: clamp(170px, 38vw, 200px);
-
     min-height: 170px;
   }
 
-
   .chartjs-doughnut-shell {
-    width: min(13rem, 100%);
-
-    height: min(13rem, 100%);
+    width: min(15rem, 100%);
+    height: min(15rem, 100%);
   }
-
 
   .donut-selection-tooltip {
     font-size: 0.66rem;
-
     padding: 0.38rem 0.6rem;
-
     pointer-events: none;
   }
-}
+}

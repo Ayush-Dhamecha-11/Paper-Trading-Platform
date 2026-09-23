@@ -87,11 +87,14 @@ export default function StockTable({
   title = "Stock Universe",
   subtitle = "Browse all stocks available on the platform",
   visibleRows = 8,
+  onRowClick,
 }: Readonly<{
   stocks: Stock[];
   title?: string;
   subtitle?: string;
   visibleRows?: number;
+  /** Called when a row is clicked/activated. Receives the full Stock object. */
+  onRowClick?: (stock: Stock) => void;
 }>) {
   const [query, setQuery] = useState("");
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
@@ -399,8 +402,27 @@ export default function StockTable({
                       ? "change-down"
                       : "change-flat";
 
+                const isClickable = !!onRowClick;
+
                 return (
-                  <tr key={stock.ticker}>
+                  <tr
+                    key={stock.ticker}
+                    className={isClickable ? "stock-row-clickable" : undefined}
+                    role={isClickable ? "button" : undefined}
+                    tabIndex={isClickable ? 0 : undefined}
+                    title={isClickable ? `Trade ${stock.ticker}` : undefined}
+                    onClick={isClickable ? () => onRowClick(stock) : undefined}
+                    onKeyDown={
+                      isClickable
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onRowClick(stock);
+                            }
+                          }
+                        : undefined
+                    }
+                  >
                     <td className="stock-ticker">
                       <strong>{stock.ticker}</strong>
                     </td>
@@ -419,6 +441,7 @@ export default function StockTable({
                 );
               })}
             </tbody>
+
           </table>
         )}
       </div>

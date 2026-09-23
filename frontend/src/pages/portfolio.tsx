@@ -8,6 +8,7 @@ import {
 import type { AllocationPoint, TimeSeriesPoint } from "../data/analyticsData";
 import { authenticatedFetch, getBackendBaseUrl, getStoredUserInfo, logBackendResponse, logoutUser, setStoredUserInfo, type StoredUserInfo } from "../utils/authUtils";
 import { formatChangePercent, formatCurrency } from "../utils/formatters";
+import { useTradeModal } from "../context/TradeContext";
 import "../pages_css/portfolio.css";
 
 type PortfolioHolding = {
@@ -87,6 +88,7 @@ async function loadPortfolioData(): Promise<PortfolioData> {
 }
 
 function PortfolioPage() {
+  const { openTrade } = useTradeModal();
   const [status, setStatus] = useState<"ready">("ready");
   const [data, setData] = useState<PortfolioData>(DUMMY_PORTFOLIO_DATA);
   const [holdingSearch, setHoldingSearch] = useState("");
@@ -191,7 +193,7 @@ function PortfolioPage() {
           </section>
 
           <section className="portfolio-chart-grid">
-            <AnalyticsChartCard title="Portfolio performance" eyebrow="Growth" wide>
+            <AnalyticsChartCard title="Portfolio performance" eyebrow="Growth">
               <BenchmarkComparisonChart points={data.performanceSeries} />
             </AnalyticsChartCard>
             <AnalyticsChartCard title="Sector allocation" eyebrow="Composition">
@@ -200,7 +202,10 @@ function PortfolioPage() {
           </section>
 
           <section className="portfolio-holdings-panel">
-            <div className="portfolio-section-heading"><div><p>Positions</p><h2>Holdings</h2></div><span>{filteredHoldings.length} of {holdings.length} positions</span></div>
+            <div className="portfolio-section-heading">
+              <div><p>Positions</p><h2>Holdings</h2></div>
+              <span>{filteredHoldings.length} of {holdings.length} positions</span>
+            </div>
             <div className="portfolio-holding-filters">
               <label>
                 <span>Search holdings</span>
@@ -229,7 +234,7 @@ function PortfolioPage() {
             </div>
             <div className="portfolio-table-wrap">
               <table className="portfolio-holdings-table">
-                <thead><tr><th>Stock</th><th>Qty</th><th>Current price</th><th>Last price</th><th>Market value</th><th>P/L</th><th>Day change</th></tr></thead>
+                <thead><tr><th>Stock</th><th>Qty</th><th>Current price</th><th>Last price</th><th>Market value</th><th>P/L</th><th>Day change</th><th className="portfolio-action-col">Action</th></tr></thead>
                 <tbody>{filteredHoldings.map((holding) => (
                   <tr key={holding.ticker}>
                     <td><strong>{holding.ticker}</strong><span>{holding.name} · {holding.sector}</span></td>
@@ -239,6 +244,19 @@ function PortfolioPage() {
                     <td>{formatCurrency(holding.marketValue)}</td>
                     <td className={holding.profitLoss >= 0 ? "positive" : "negative"}><strong>{formatCurrency(holding.profitLoss)}</strong><span>{formatChangePercent(holding.profitLossPct)}</span></td>
                     <td className={holding.dailyGainLoss >= 0 ? "positive" : "negative"}><strong>{formatCurrency(holding.dailyGainLoss)}</strong><span>{formatChangePercent(holding.dailyChangePct)}</span></td>
+                    <td className="portfolio-action-col">
+                      <button
+                        type="button"
+                        className="portfolio-sell-btn"
+                        onClick={() => openTrade(
+                          { ticker: holding.ticker, name: holding.name, price: holding.currentPrice },
+                          "sell"
+                        )}
+                        aria-label={`Sell ${holding.ticker}`}
+                      >
+                        Sell
+                      </button>
+                    </td>
                   </tr>
                 ))}</tbody>
               </table>

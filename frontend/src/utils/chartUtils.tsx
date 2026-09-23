@@ -68,9 +68,7 @@ function getAllocationChartData(
     datasets: [
       {
         data: sectors.map((sector) => sector.value),
-        backgroundColor: sectors.map(
-          (sector) => sector.color
-        ),
+        backgroundColor: sectors.map((sector) => sector.color),
         borderWidth: 0,
         borderColor: "transparent",
         offset: sectors.map((_, index) =>
@@ -115,12 +113,9 @@ function profitLineChartOptions(): ChartOptions<"line"> {
         padding: 10,
         callbacks: {
           label: (context) =>
-            ` ${(context.parsed.y ?? 0).toLocaleString(
-              "en-IN",
-              {
-                maximumFractionDigits: 2,
-              }
-            )}`,
+            ` ${(context.parsed.y ?? 0).toLocaleString("en-IN", {
+              maximumFractionDigits: 2,
+            })}`,
         },
       },
     },
@@ -130,55 +125,27 @@ function profitLineChartOptions(): ChartOptions<"line"> {
           display: true,
           text: "Date",
           color: "#b7faff",
-          font: {
-            size: 11,
-            weight: 600,
-          },
+          font: { size: 11, weight: 600 },
         },
-        grid: {
-          display: false,
-        },
-        ticks: {
-          color: "#8ea2b7",
-          maxRotation: 0,
-          autoSkip: true,
-          font: {
-            size: 10,
-          },
-        },
-        border: {
-          display: false,
-        },
+        grid: { display: false },
+        ticks: { color: "#8ea2b7", maxRotation: 0, autoSkip: true, font: { size: 10 } },
+        border: { display: false },
       },
       y: {
         title: {
           display: true,
           text: "Profit",
           color: "#b7faff",
-          font: {
-            size: 11,
-            weight: 600,
-          },
+          font: { size: 11, weight: 600 },
         },
-        grid: {
-          color: "rgba(148, 163, 184, 0.18)",
-        },
+        grid: { color: "rgba(148, 163, 184, 0.18)" },
         ticks: {
           color: "#8ea2b7",
           callback: (value) =>
-            `${Number(value).toLocaleString(
-              "en-IN",
-              {
-                maximumFractionDigits: 0,
-              }
-            )}`,
-          font: {
-            size: 9,
-          },
+            `${Number(value).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`,
+          font: { size: 9 },
         },
-        border: {
-          display: false,
-        },
+        border: { display: false },
       },
     },
   };
@@ -200,26 +167,18 @@ function allocationDoughnutChartOptions(
       padding: 16,
     },
     plugins: {
-      legend: {
-        display: false,
-      },
-      tooltip: {
-        enabled: false,
-      },
+      legend: { display: false },
+      tooltip: { enabled: false },
     },
-    animation: {
-      duration: 150,
-    },
+    animation: { duration: 150 },
     onHover: (_, elements) => {
       if (elements.length > 0) {
         const index = elements[0].index;
-
         if (typeof index === "number") {
           onSelect(index);
           return;
         }
       }
-
       onSelect(null);
     },
   };
@@ -234,10 +193,7 @@ export function ProfitLineChart({
 }>) {
   return (
     <div className="chartjs-shell chartjs-line-shell">
-      <Line
-        data={getProfitChartData(values, labels)}
-        options={profitLineChartOptions()}
-      />
+      <Line data={getProfitChartData(values, labels)} options={profitLineChartOptions()} />
     </div>
   );
 }
@@ -247,14 +203,9 @@ export function AllocationDoughnutChart({
 }: Readonly<{
   sectors: SectorSlice[];
 }>) {
-  const [selectedIndex, setSelectedIndex] = useState<
-    number | null
-  >(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
-  const activeSector =
-    selectedIndex === null
-      ? null
-      : sectors[selectedIndex];
+  const activeSector = selectedIndex === null ? null : sectors[selectedIndex];
 
   return (
     <div
@@ -263,15 +214,9 @@ export function AllocationDoughnutChart({
       onTouchEnd={() => setSelectedIndex(null)}
     >
       <Doughnut
-        data={getAllocationChartData(
-          sectors,
-          selectedIndex
-        )}
-        options={allocationDoughnutChartOptions(
-          setSelectedIndex
-        )}
+        data={getAllocationChartData(sectors, selectedIndex)}
+        options={allocationDoughnutChartOptions(setSelectedIndex)}
       />
-
       {activeSector && (
         <div
           className="donut-selection-tooltip"
