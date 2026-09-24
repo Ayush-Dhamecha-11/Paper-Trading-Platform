@@ -16,11 +16,17 @@ import {
   executeSuggestionsAsIs,
   type TradeSuggestion,
 } from "../../utils/tradeApi";
+import type { Stock } from "../../data/stocksData";
 import { useTradeModal } from "../../context/TradeContext";
 import { getStoredUserInfo } from "../../utils/authUtils";
+import { getCachedData, HOLDINGS_CACHE_KEY } from "../../utils/dataCache";
 import "./StrategyBanner.css";
 
-export default function StrategyBanner() {
+type Props = {
+  stocks?: Stock[];
+};
+
+export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   const { openTradeWithBasket } = useTradeModal();
   const [rawSuggestions, setRawSuggestions] = useState<TradeSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +42,7 @@ export default function StrategyBanner() {
 
   useEffect(() => {
     let mounted = true;
-    fetchDailySuggestions()
+    fetchDailySuggestions(stocks)
       .then((data) => {
         if (mounted) {
           setRawSuggestions(data);
@@ -49,7 +55,7 @@ export default function StrategyBanner() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [stocks]);
 
   // Filter out any stocks with 0 quantity (backend might send 0 buy or 0 sell)
   const validSuggestions = useMemo(() => {
@@ -58,24 +64,55 @@ export default function StrategyBanner() {
     );
   }, [rawSuggestions]);
 
-  // Compute financial totals
-  const totalBuy = useMemo(
-    () =>
-      validSuggestions
-        .filter((s) => s.action === "buy")
-        .reduce((sum, s) => sum + s.price * s.quantity, 0),
-    [validSuggestions]
-  );
+  // Compute financial totals with 20% short-selling margin freeze rule
+  const breakdown = useMemo(() => {
+    const cachedHoldings =
+      getCachedData<Array<{ ticker: string; quantity: number }>>(HOLDINGS_CACHE_KEY) ?? [];
+    const heldMap = new Map<string, number>();
+    cachedHoldings.forEach((h) => {
+      heldMap.set(
+        h.ticker.toUpperCase(),
+        (heldMap.get(h.ticker.toUpperCase()) ?? 0) + h.quantity
+      );
+    });
 
-  const totalSell = useMemo(
-    () =>
-      validSuggestions
-        .filter((s) => s.action === "sell")
-        .reduce((sum, s) => sum + s.price * s.quantity, 0),
-    [validSuggestions]
-  );
+    let buyTotal = 0;
+    let regularSell = 0;
+    let shortNominal = 0;
+    let shortMarginToFreeze = 0;
 
-  const netRequired = totalBuy - totalSell;
+    validSuggestions.forEach((item) => {
+      if (item.action === "buy") {
+        buyTotal += item.price * item.quantity;
+      } else {
+        const currentHeld = heldMap.get(item.ticker.toUpperCase()) ?? 0;
+        const regQty = Math.min(item.quantity, currentHeld);
+        const sQty = Math.max(0, item.quantity - currentHeld);
+        heldMap.set(item.ticker.toUpperCase(), Math.max(0, currentHeld - regQty));
+
+        const regAmt = regQty * item.price;
+        const sNom = sQty * item.price;
+        const margin = sNom * 0.20; // 20% margin frozen from capital
+
+        regularSell += regAmt;
+        shortNominal += sNom;
+        shortMarginToFreeze += margin;
+      }
+    });
+
+    const netTradeCapital = buyTotal - regularSell;
+    const netRequired = netTradeCapital + shortMarginToFreeze;
+
+    return {
+      buyTotal,
+      regularSell,
+      shortNominal,
+      shortMarginToFreeze,
+      netRequired,
+    };
+  }, [validSuggestions]);
+
+  const { buyTotal: totalBuy, netRequired } = breakdown;
 
   const buyCount = useMemo(
     () => validSuggestions.filter((s) => s.action === "buy").length,
@@ -274,7 +311,10 @@ export default function StrategyBanner() {
                 : `+${formatCurrency(Math.abs(netRequired))} proceeds`}
             </strong>
             <span className="strategy-net-subtext">
-              (Buys: {formatCurrency(totalBuy)} · Sells: {formatCurrency(totalSell)})
+              Buys: {formatCurrency(totalBuy)} · Sells: {formatCurrency(breakdown.regularSell)}
+              {breakdown.shortMarginToFreeze > 0 && (
+                <> · Margin Frozen (20%): {formatCurrency(breakdown.shortMarginToFreeze)}</>
+              )}
             </span>
           </div>
 

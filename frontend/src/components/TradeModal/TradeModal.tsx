@@ -22,6 +22,7 @@ import {
   ShoppingBag,
   ArrowRight,
   Zap,
+  Info,
 } from "lucide-react";
 import type { Stock } from "../../data/stocksData";
 import { formatCurrency } from "../../utils/formatters";
@@ -340,38 +341,171 @@ export default function TradeModal({
     setBasket([]);
   };
 
-  // ── Financial calculations (Net Capital Check) ──
-  const totalBuy = useMemo(
-    () =>
-      basket
-        .filter((o) => o.action === "buy")
-        .reduce((sum, o) => sum + o.price * o.quantity, 0),
-    [basket]
-  );
+  // ── Candidate order analysis (real-time preview before adding to basket) ──
+  // ── Candidate order analysis (real-time preview before adding to basket) ──
+  const candidateAnalysis = useMemo(() => {
+    if (!candidateStock) return null;
+    const qty = Math.max(1, parseInt(candidateQty, 10) || 1);
+    const price = candidateStock.price;
+    const nominalSubtotal = price * qty;
 
-  const totalSell = useMemo(
-    () =>
-      basket
-        .filter((o) => o.action === "sell")
-        .reduce((sum, o) => sum + o.price * o.quantity, 0),
-    [basket]
-  );
+    if (candidateAction === "buy") {
+      return {
+        isShort: false,
+        isPartialShort: false,
+        regularQty: 0,
+        shortQty: 0,
+        nominalSubtotal,
+        regularCredit: 0,
+        marginToFreeze: 0,
+        totalHeld: 0,
+        availableHeld: 0,
+      };
+    }
 
-  // Net Cash Required: if Buys > Sells, user pays the net difference
-  // If Sells >= Buys, net requirement is 0 (or negative, meaning user receives cash!)
-  const netRequired = totalBuy - totalSell;
-  const shortfall = netRequired > availableCapital ? netRequired - availableCapital : 0;
-  const isOverCapital = shortfall > 0;
-  const postTradeBalance = availableCapital - netRequired;
+    // Sell action: check if user holds this stock
+    const totalHeld =
+      holdings.find(
+        (h) => h.ticker.toUpperCase() === candidateStock.ticker.toUpperCase()
+      )?.quantity ?? 0;
 
-  // Check for short-selling in basket
-  const shortSellOrders = useMemo(() => {
-    return basket.filter((o) => {
-      if (o.action !== "sell") return false;
-      const held = holdings.find((h) => h.ticker === o.ticker)?.quantity ?? 0;
-      return o.quantity > held;
+    // Sells already staged in current basket for this stock
+    const alreadyInBasket = basket
+      .filter(
+        (item) =>
+          item.action === "sell" &&
+          item.ticker.toUpperCase() === candidateStock.ticker.toUpperCase()
+      )
+      .reduce((sum, item) => sum + item.quantity, 0);
+
+    const availableHeld = Math.max(0, totalHeld - alreadyInBasket);
+    const regularQty = Math.min(qty, availableHeld);
+    const shortQty = Math.max(0, qty - availableHeld);
+
+    const regularCredit = regularQty * price;
+    const shortNominal = shortQty * price;
+    const marginToFreeze = shortNominal * 0.20; // 20% margin frozen from capital
+
+    return {
+      isShort: shortQty > 0 && regularQty === 0,
+      isPartialShort: shortQty > 0 && regularQty > 0,
+      regularQty,
+      shortQty,
+      nominalSubtotal,
+      regularCredit,
+      marginToFreeze,
+      totalHeld,
+      availableHeld,
+    };
+  }, [candidateStock, candidateAction, candidateQty, holdings, basket]);
+
+  // ── Financial calculations (Net Capital Check with 20% Margin Freeze) ──
+  // Rule:
+  // 1. Buy: full nominal cost added to totalBuy
+  // 2. Regular Sell (owned stock): 100% credited against buy requirements (regularSell)
+  // 3. Short Sell (unowned stock): 0% proceeds credited (liability); 20% margin frozen from capital
+  // 4. Net Required = (totalBuy - regularSell) + shortMarginToFreeze
+  // 5. Shortfall = max(0, netRequired - availableCapital)
+  const basketAnalysis = useMemo(() => {
+    const heldMap = new Map<string, number>();
+    holdings.forEach((h) => {
+      heldMap.set(
+        h.ticker.toUpperCase(),
+        (heldMap.get(h.ticker.toUpperCase()) ?? 0) + h.quantity
+      );
     });
-  }, [basket, holdings]);
+
+    let totalBuy = 0;
+    let regularSell = 0;
+    let shortSellNominal = 0;
+    let shortMarginToFreeze = 0;
+
+    const items = basket.map((item) => {
+      const nominalSubtotal = item.price * item.quantity;
+
+      if (item.action === "buy") {
+        totalBuy += nominalSubtotal;
+        return {
+          ...item,
+          isShort: false,
+          isPartialShort: false,
+          regularQty: 0,
+          regularAmount: 0,
+          shortQty: 0,
+          shortNominal: 0,
+          marginToFreeze: 0,
+          creditedAmount: 0,
+          nominalSubtotal,
+        };
+      }
+
+      // Action is "sell"
+      const currentHeld = heldMap.get(item.ticker.toUpperCase()) ?? 0;
+      const regularQty = Math.min(item.quantity, currentHeld);
+      const shortQty = Math.max(0, item.quantity - currentHeld);
+
+      // Decrement held quantity for subsequent sells of this stock
+      heldMap.set(
+        item.ticker.toUpperCase(),
+        Math.max(0, currentHeld - regularQty)
+      );
+
+      const regularAmount = regularQty * item.price;
+      const shortNominal = shortQty * item.price;
+      const marginToFreeze = shortNominal * 0.20; // 20% margin frozen from capital
+
+      regularSell += regularAmount;
+      shortSellNominal += shortNominal;
+      shortMarginToFreeze += marginToFreeze;
+
+      return {
+        ...item,
+        isShort: shortQty > 0 && regularQty === 0,
+        isPartialShort: shortQty > 0 && regularQty > 0,
+        regularQty,
+        regularAmount,
+        shortQty,
+        shortNominal,
+        marginToFreeze,
+        creditedAmount: regularAmount,
+        nominalSubtotal,
+      };
+    });
+
+    // Net capital required: buys minus owned proceeds plus 20% frozen short margin
+    const netTradeCapital = totalBuy - regularSell;
+    const netRequired = netTradeCapital + shortMarginToFreeze;
+    const shortfall = netRequired > availableCapital ? netRequired - availableCapital : 0;
+    const isOverCapital = shortfall > 0;
+    const postTradeBalance = availableCapital - netRequired;
+
+    const shortSellOrders = items.filter((i) => i.shortQty > 0);
+
+    return {
+      items,
+      totalBuy,
+      regularSell,
+      shortSellNominal,
+      shortMarginToFreeze,
+      netRequired,
+      shortfall,
+      isOverCapital,
+      postTradeBalance,
+      shortSellOrders,
+    };
+  }, [basket, holdings, availableCapital]);
+
+  const {
+    totalBuy,
+    regularSell,
+    shortSellNominal,
+    shortMarginToFreeze,
+    netRequired,
+    shortfall,
+    isOverCapital,
+    postTradeBalance,
+    shortSellOrders,
+  } = basketAnalysis;
 
   // Can submit check: basket has at least 1 order, no shortfall, not submitting
   const canSubmit =
@@ -558,7 +692,7 @@ export default function TradeModal({
             </div>
 
             {/* Candidate Configuration (Action + Qty + Add Button) */}
-            {candidateStock && (
+            {candidateStock && candidateAnalysis && (
               <div className="tm-candidate-card">
                 <div className="tm-candidate-meta">
                   <div>
@@ -606,11 +740,14 @@ export default function TradeModal({
                   {/* Estimated Subtotal */}
                   <div className="tm-cand-subtotal">
                     <span>=</span>
-                    <strong>
-                      {formatCurrency(
-                        candidateStock.price * Math.max(1, parseInt(candidateQty, 10) || 1)
+                    <div className="tm-cand-subtotal-text">
+                      <strong>{formatCurrency(candidateAnalysis.nominalSubtotal)}</strong>
+                      {candidateAnalysis.marginToFreeze > 0 && (
+                        <span className="tm-cand-deduction-hint">
+                          Margin: {formatCurrency(candidateAnalysis.marginToFreeze)} (20%)
+                        </span>
                       )}
-                    </strong>
+                    </div>
                   </div>
 
                   {/* Add Button */}
@@ -623,6 +760,32 @@ export default function TradeModal({
                     <span>Add to Order</span>
                   </button>
                 </div>
+
+                {/* Sell Action Context Hint (Holdings vs Short Sell) */}
+                {candidateAction === "sell" && (
+                  <div className="tm-cand-status-row">
+                    {candidateAnalysis.isShort ? (
+                      <div className="tm-cand-short-alert">
+                        <AlertTriangle size={13} aria-hidden="true" />
+                        <span>
+                          <strong>Short Sell:</strong> You hold 0 shares of {candidateStock.ticker}. 20% margin ({formatCurrency(candidateAnalysis.marginToFreeze)}) will be frozen from your capital. Short sell proceeds are not credited to purchasing power.
+                        </span>
+                      </div>
+                    ) : candidateAnalysis.isPartialShort ? (
+                      <div className="tm-cand-short-alert">
+                        <AlertTriangle size={13} aria-hidden="true" />
+                        <span>
+                          <strong>Partial Short:</strong> Selling {candidateAnalysis.regularQty} held shares (+{formatCurrency(candidateAnalysis.regularCredit)} credited) + {candidateAnalysis.shortQty} shorted shares ({formatCurrency(candidateAnalysis.marginToFreeze)} margin frozen from capital).
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="tm-cand-held-info">
+                        <CheckCircle2 size={13} aria-hidden="true" />
+                        <span>Holding {candidateAnalysis.availableHeld} shares available. 100% sale proceeds (+{formatCurrency(candidateAnalysis.regularCredit)}) credited.</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -653,7 +816,7 @@ export default function TradeModal({
                 type="button"
                 className="tm-btn-import-sug"
                 onClick={async () => {
-                  const sugs = await fetchDailySuggestions();
+                  const sugs = await fetchDailySuggestions(allStocks);
                   setBasket(
                     sugs.map((s, idx) => ({
                       id: `item_${Date.now()}_${idx}`,
@@ -672,14 +835,26 @@ export default function TradeModal({
             </div>
           ) : (
             <div className="tm-basket-list">
-              {basket.map((item) => {
-                const subtotal = item.price * item.quantity;
+              {basketAnalysis.items.map((item) => {
                 return (
-                  <div key={item.id} className={`tm-basket-row tm-row-${item.action}`}>
+                  <div
+                    key={item.id}
+                    className={`tm-basket-row tm-row-${item.action}${item.isShort ? " tm-row-short" : ""}`}
+                  >
                     <div className="tm-row-action-tag">
-                      <span className={`tm-badge tm-badge-${item.action}`}>
-                        {item.action.toUpperCase()}
-                      </span>
+                      {item.action === "buy" ? (
+                        <span className="tm-badge tm-badge-buy">BUY</span>
+                      ) : item.isShort ? (
+                        <span className="tm-badge tm-badge-short" title="Short Sell (20% margin frozen from capital)">
+                          SHORT
+                        </span>
+                      ) : item.isPartialShort ? (
+                        <span className="tm-badge tm-badge-partial" title="Partial short sell">
+                          PARTIAL
+                        </span>
+                      ) : (
+                        <span className="tm-badge tm-badge-sell">SELL</span>
+                      )}
                     </div>
 
                     <div className="tm-row-details">
@@ -717,7 +892,25 @@ export default function TradeModal({
                     </div>
 
                     <div className="tm-row-total">
-                      <strong>{formatCurrency(subtotal)}</strong>
+                      {item.action === "buy" ? (
+                        <strong>{formatCurrency(item.nominalSubtotal)}</strong>
+                      ) : item.isShort ? (
+                        <>
+                          <strong className="tm-stat-amber">{formatCurrency(item.nominalSubtotal)}</strong>
+                          <small className="tm-row-margin-hint">
+                            Margin: {formatCurrency(item.marginToFreeze)}
+                          </small>
+                        </>
+                      ) : item.isPartialShort ? (
+                        <>
+                          <strong className="tm-stat-green">+{formatCurrency(item.creditedAmount)}</strong>
+                          <small className="tm-row-margin-hint">
+                            Margin: {formatCurrency(item.marginToFreeze)}
+                          </small>
+                        </>
+                      ) : (
+                        <strong className="tm-stat-green">+{formatCurrency(item.nominalSubtotal)}</strong>
+                      )}
                     </div>
 
                     <button
@@ -734,36 +927,64 @@ export default function TradeModal({
               })}
             </div>
           )}
-
-          {/* Short-selling notice */}
-          {shortSellOrders.length > 0 && (
-            <div className="tm-warning" role="alert">
-              <AlertTriangle size={14} aria-hidden="true" />
-              <span>
-                Short selling on:{" "}
-                {shortSellOrders.map((o) => o.ticker).join(", ")}. Short positions will be opened.
-              </span>
-            </div>
-          )}
         </div>
 
-        {/* Section 3: Net Financial Breakdown */}
+        {/* Section 3: Net Financial Breakdown (Buys - Regular Sells + 20% Margin Freeze) */}
         {basket.length > 0 && (
           <div className="tm-section tm-summary-section">
-            <div className="tm-summary-grid">
+            <div className="tm-summary-grid tm-summary-grid-4">
               <div className="tm-summary-stat">
                 <span>Total Buys</span>
                 <strong>{formatCurrency(totalBuy)}</strong>
               </div>
               <div className="tm-summary-stat">
-                <span>Sell Proceeds</span>
-                <strong className="tm-stat-green">{formatCurrency(totalSell)}</strong>
+                <span>Holdings Sold</span>
+                <strong className="tm-stat-green">+{formatCurrency(regularSell)}</strong>
+              </div>
+              <div className="tm-summary-stat tm-stat-short-box">
+                <div className="tm-stat-header-row">
+                  <span>Margin Frozen (20%)</span>
+                  {shortMarginToFreeze > 0 && (
+                    <span className="tm-stat-chip-deduction">20% Collateral</span>
+                  )}
+                </div>
+                <strong className={shortMarginToFreeze > 0 ? "tm-stat-amber" : ""}>
+                  {formatCurrency(shortMarginToFreeze)}
+                </strong>
+                {shortSellNominal > 0 && (
+                  <span className="tm-stat-gross-hint">
+                    Gross Short: {formatCurrency(shortSellNominal)}
+                  </span>
+                )}
               </div>
               <div className="tm-summary-stat tm-stat-net">
                 <span>Net Required</span>
                 <strong>{formatCurrency(Math.max(0, netRequired))}</strong>
+                {netRequired < 0 && (
+                  <span className="tm-stat-gross-hint tm-stat-green">
+                    Net Credit: +{formatCurrency(Math.abs(netRequired))}
+                  </span>
+                )}
               </div>
             </div>
+
+            {/* 20% Short Selling Notice Banner */}
+            {shortSellNominal > 0 && (
+              <div className="tm-short-deduction-banner" role="note">
+                <div className="tm-short-banner-icon">
+                  <Info size={16} aria-hidden="true" />
+                </div>
+                <div className="tm-short-banner-content">
+                  <div className="tm-short-banner-title">
+                    <strong>20% Short Selling Margin: {formatCurrency(shortMarginToFreeze)} Frozen from Capital</strong>
+                    <span className="tm-short-badge-small">Collateral Lock</span>
+                  </div>
+                  <p>
+                    Short sale proceeds are not credited to your purchasing power. A 20% margin ({formatCurrency(shortMarginToFreeze)}) is frozen from your available capital as security for {formatCurrency(shortSellNominal)} in open short positions.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Validation feedback */}
             {isOverCapital ? (
@@ -772,8 +993,8 @@ export default function TradeModal({
                 <div>
                   <strong>Shortfall of {formatCurrency(shortfall)}</strong>
                   <p>
-                    Net required ({formatCurrency(netRequired)}) exceeds your capital ({formatCurrency(availableCapital)}).{" "}
-                    Add sell orders of at least {formatCurrency(shortfall)}, or{" "}
+                    Net capital required ({formatCurrency(netRequired)}) exceeds your available capital ({formatCurrency(availableCapital)}) (including {formatCurrency(shortMarginToFreeze)} margin frozen for short positions).{" "}
+                    Add owned sell orders of at least {formatCurrency(shortfall)}, or{" "}
                     <button
                       type="button"
                       className="tm-inline-btn"
@@ -788,19 +1009,19 @@ export default function TradeModal({
                   </p>
                 </div>
               </div>
-            ) : netRequired <= 0 && totalSell > 0 ? (
+            ) : netRequired <= 0 && regularSell > totalBuy ? (
               <div className="tm-net-positive" role="status">
                 <CheckCircle2 size={15} aria-hidden="true" />
                 <span>
-                  Net credit of {formatCurrency(Math.abs(netRequired))} will be added to your balance upon execution.
+                  Net credit of {formatCurrency(Math.abs(netRequired))} from owned stock sales will be added to your balance upon execution.
                 </span>
               </div>
             ) : (
               <div className="tm-net-balanced" role="status">
                 <CheckCircle2 size={15} aria-hidden="true" />
                 <span>
-                  Net required: {formatCurrency(netRequired)}. Balance after trade:{" "}
-                  {formatCurrency(postTradeBalance)}.
+                  Net capital needed: {formatCurrency(netRequired)}. Usable capital after trade:{" "}
+                  {formatCurrency(postTradeBalance)}{shortMarginToFreeze > 0 ? ` (${formatCurrency(shortMarginToFreeze)} locked as margin)` : ""}.
                 </span>
               </div>
             )}

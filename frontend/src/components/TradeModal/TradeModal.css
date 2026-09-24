@@ -41,6 +41,13 @@
   --tm-warning-color: #f5c542;
   --tm-warning-border: rgba(251, 191, 36, 0.35);
 
+  /* Short selling colours (amber/orange) */
+  --tm-short-bg: rgba(245, 158, 11, 0.12);
+  --tm-short-border: rgba(245, 158, 11, 0.38);
+  --tm-short-color: #f59e0b;
+  --tm-short-active-bg: #f59e0b;
+  --tm-short-active-color: #1e1302;
+
   --tm-btn-secondary-bg: rgba(255, 255, 255, 0.04);
   --tm-btn-secondary-border: rgba(148, 163, 184, 0.25);
   --tm-btn-secondary-color: var(--tm-text);
@@ -87,6 +94,12 @@
   --tm-warning-bg: rgba(180, 130, 0, 0.08);
   --tm-warning-color: #8a6200;
   --tm-warning-border: rgba(180, 130, 0, 0.25);
+
+  --tm-short-bg: rgba(217, 119, 6, 0.1);
+  --tm-short-border: rgba(217, 119, 6, 0.35);
+  --tm-short-color: #b45309;
+  --tm-short-active-bg: #b45309;
+  --tm-short-active-color: #ffffff;
 
   --tm-btn-secondary-bg: #f4f8fb;
   --tm-btn-secondary-border: rgba(7, 20, 38, 0.18);
@@ -524,13 +537,56 @@
 .tm-cand-subtotal {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
   font-size: 0.95rem;
   color: var(--tm-text);
 }
 
-.tm-cand-subtotal span {
+.tm-cand-subtotal > span {
   color: var(--tm-muted);
+}
+
+.tm-cand-subtotal-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.tm-cand-deduction-hint {
+  font-size: 0.68rem;
+  color: var(--tm-short-color);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.tm-cand-status-row {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px dashed var(--tm-panel-border);
+}
+
+.tm-cand-short-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.76rem;
+  color: var(--tm-short-color);
+  background: var(--tm-short-bg);
+  border: 1px solid var(--tm-short-border);
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  line-height: 1.35;
+}
+
+.tm-cand-held-info {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.76rem;
+  color: var(--tm-success-color);
+  background: var(--tm-success-bg);
+  border: 1px solid var(--tm-success-border);
+  padding: 0.4rem 0.65rem;
+  border-radius: 6px;
 }
 
 /* Add to order button */
@@ -635,7 +691,7 @@
 
 .tm-basket-row {
   display: grid;
-  grid-template-columns: auto 1fr auto auto auto;
+  grid-template-columns: 3.5rem 1fr auto auto auto;
   align-items: center;
   gap: 0.75rem;
   padding: 0.65rem 0.85rem;
@@ -652,12 +708,22 @@
   border-left: 3px solid var(--tm-sell-color);
 }
 
+.tm-row-short {
+  border-left: 3px solid var(--tm-short-color) !important;
+}
+
 .tm-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
   font-size: 0.68rem;
   font-weight: 900;
-  letter-spacing: 0.06em;
-  padding: 0.2rem 0.45rem;
+  letter-spacing: 0.05em;
+  padding: 0.22rem 0;
   border-radius: 4px;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .tm-badge-buy {
@@ -670,6 +736,18 @@
   background: var(--tm-sell-bg);
   color: var(--tm-sell-color);
   border: 1px solid var(--tm-sell-border);
+}
+
+.tm-badge-short {
+  background: var(--tm-short-bg);
+  color: var(--tm-short-color);
+  border: 1px solid var(--tm-short-border);
+}
+
+.tm-badge-partial {
+  background: var(--tm-short-bg);
+  color: var(--tm-short-color);
+  border: 1px dashed var(--tm-short-border);
 }
 
 .tm-row-details {
@@ -690,6 +768,13 @@
 .tm-row-price {
   font-size: 0.74rem;
   color: var(--tm-muted);
+}
+
+.tm-row-short-tag {
+  font-size: 0.68rem;
+  color: var(--tm-short-color);
+  font-weight: 700;
+  margin-top: 0.1rem;
 }
 
 /* Stepper */
@@ -738,9 +823,25 @@
 }
 
 .tm-row-total {
-  font-size: 0.88rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tm-row-total strong {
+  font-size: 0.9rem;
   font-weight: 800;
   color: var(--tm-text);
+}
+
+.tm-row-margin-hint {
+  display: block;
+  font-size: 0.66rem;
+  color: var(--tm-short-color);
+  font-weight: 700;
+  margin-top: 0.08rem;
   white-space: nowrap;
 }
 
@@ -777,6 +878,11 @@
   margin-bottom: 0.75rem;
 }
 
+.tm-summary-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.65rem;
+}
+
 .tm-summary-stat {
   display: flex;
   flex-direction: column;
@@ -805,6 +911,40 @@
   color: var(--tm-success-color) !important;
 }
 
+.tm-stat-amber {
+  color: var(--tm-short-color) !important;
+}
+
+.tm-stat-short-box {
+  background: var(--tm-short-bg);
+  border-color: var(--tm-short-border);
+}
+
+.tm-stat-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+
+.tm-stat-chip-deduction {
+  font-size: 0.62rem;
+  font-weight: 900;
+  padding: 0.1rem 0.32rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--tm-short-color) 25%, transparent);
+  color: var(--tm-short-color);
+  border: 1px solid var(--tm-short-border);
+  letter-spacing: 0;
+}
+
+.tm-stat-gross-hint {
+  font-size: 0.66rem;
+  color: var(--tm-muted);
+  font-weight: 600;
+  margin-top: 0.1rem;
+}
+
 .tm-stat-net {
   background: rgba(39, 199, 220, 0.08);
   border-color: var(--tm-buy-border);
@@ -812,6 +952,64 @@
 
 .tm-stat-net strong {
   color: var(--tm-buy-color);
+}
+
+/* 20% Short Selling Deduction Notice Banner */
+.tm-short-deduction-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.75rem 0.95rem;
+  border-radius: 9px;
+  background: var(--tm-short-bg);
+  border: 1px solid var(--tm-short-border);
+  color: var(--tm-text);
+  margin-bottom: 0.65rem;
+}
+
+.tm-short-banner-icon {
+  display: grid;
+  place-items: center;
+  color: var(--tm-short-color);
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.tm-short-banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.tm-short-banner-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tm-short-banner-title strong {
+  font-size: 0.84rem;
+  color: var(--tm-short-color);
+}
+
+.tm-short-badge-small {
+  font-size: 0.64rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--tm-short-color) 20%, transparent);
+  color: var(--tm-short-color);
+}
+
+.tm-short-banner-content p {
+  margin: 0;
+  color: var(--tm-muted);
+  font-size: 0.76rem;
 }
 
 /* Validation status feedback */
@@ -963,7 +1161,12 @@
   flex: 1;
 }
 
-/* ── Mobile ─────────────────────────────────────────────────────────── */
+@media (max-width: 620px) {
+  .tm-summary-grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 @media (max-width: 580px) {
   .tm-overlay {
     align-items: flex-end;
@@ -976,13 +1179,16 @@
     border-radius: 1.25rem 1.25rem 0 0;
   }
 
-  .tm-summary-grid {
+  .tm-summary-grid,
+  .tm-summary-grid-4 {
     grid-template-columns: 1fr;
     gap: 0.5rem;
   }
 
   .tm-basket-row {
-    grid-template-columns: auto 1fr auto auto;
+    grid-template-columns: 3.2rem 1fr auto auto auto;
+    gap: 0.5rem;
+    padding: 0.55rem 0.65rem;
   }
 
   .tm-candidate-controls {

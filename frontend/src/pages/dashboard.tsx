@@ -455,7 +455,7 @@ function DashboardPage() {
         </section>
 
         {/* Daily Strategy & Auto-Trade Desk */}
-        <StrategyBanner />
+        <StrategyBanner stocks={stocks} />
 
         <section className="dashboard-stock-section">
           {stockContent}

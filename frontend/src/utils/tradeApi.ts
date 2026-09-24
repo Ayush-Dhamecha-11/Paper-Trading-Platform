@@ -1,4 +1,7 @@
+import type { Stock } from "../data/stocksData";
+import { STOCK_UNIVERSE } from "../data/stocksData";
 import { authenticatedFetch, getBackendBaseUrl, logBackendResponse } from "./authUtils";
+import { DASHBOARD_STOCKS_CACHE_KEY, getCachedData } from "./dataCache";
 
 export type TradeAction = "buy" | "sell";
 
@@ -107,15 +110,14 @@ export type TradeSuggestion = {
   executedAt?: string;
 };
 
-// Fallback dummy suggestions if backend is not yet ready (quantity > 0, no reasons)
-const DEFAULT_SUGGESTIONS: TradeSuggestion[] = [
+// Fallback dummy suggestions blueprint (quantity > 0, no reasons)
+const DEFAULT_SUGGESTION_CONFIGS: Omit<TradeSuggestion, "price">[] = [
   {
     id: "sug_1",
     ticker: "TCS",
     name: "Tata Consultancy Services",
     action: "buy",
     quantity: 2,
-    price: 3844.44,
     status: "pending",
   },
   {
@@ -124,7 +126,6 @@ const DEFAULT_SUGGESTIONS: TradeSuggestion[] = [
     name: "ITC Limited",
     action: "sell",
     quantity: 15,
-    price: 452.5,
     status: "pending",
   },
   {
@@ -133,7 +134,6 @@ const DEFAULT_SUGGESTIONS: TradeSuggestion[] = [
     name: "Reliance Industries",
     action: "buy",
     quantity: 3,
-    price: 2653.33,
     status: "pending",
   },
   {
@@ -142,37 +142,56 @@ const DEFAULT_SUGGESTIONS: TradeSuggestion[] = [
     name: "HDFC Bank",
     action: "sell",
     quantity: 5,
-    price: 1660.42,
     status: "pending",
   },
 ];
 
 /**
  * Fetches today's trade suggestions from the backend.
- * Filters out any suggestions with 0 buy or 0 sell quantity.
- * Falls back to DEFAULT_SUGGESTIONS if backend call fails.
+ * Reuses live stock prices from the 1st stock API call (passed in or retrieved from cache)
+ * without making redundant stock network requests.
+ * When the backend suggestions endpoint is ready, it uses the backend's prices and data directly.
  */
-export async function fetchDailySuggestions(): Promise<TradeSuggestion[]> {
+export async function fetchDailySuggestions(availableStocks?: Stock[]): Promise<TradeSuggestion[]> {
   try {
     const response = await authenticatedFetch(
       `${getBackendBaseUrl()}/api/strategy/suggestions`,
       { credentials: "include" }
     );
     logBackendResponse(response, "GET /api/strategy/suggestions");
-    if (!response.ok) {
-      return DEFAULT_SUGGESTIONS.filter((s) => s.quantity > 0);
-    }
-    const data = await response.json();
-    const rawList: TradeSuggestion[] = Array.isArray(data)
-      ? data
-      : data.suggestions ?? DEFAULT_SUGGESTIONS;
+    if (response.ok) {
+      const data = await response.json();
+      const rawList: TradeSuggestion[] = Array.isArray(data)
+        ? data
+        : data.suggestions ?? [];
 
-    // Filter out stocks with 0 buy or 0 sell quantity
-    return rawList.filter((item) => typeof item.quantity === "number" && item.quantity > 0);
+      // Filter out stocks with 0 buy or 0 sell quantity
+      return rawList.filter((item) => typeof item.quantity === "number" && item.quantity > 0);
+    }
   } catch {
     // If backend endpoint is not ready or network fails, fallback to dummy suggestions
-    return DEFAULT_SUGGESTIONS.filter((s) => s.quantity > 0);
   }
+
+  // Fallback: reuse the stock prices from the 1st stocks call (do not make a separate network call)
+  const stocksPool: Stock[] =
+    availableStocks && availableStocks.length > 0
+      ? availableStocks
+      : getCachedData<Stock[]>(DASHBOARD_STOCKS_CACHE_KEY) ?? [];
+
+  return DEFAULT_SUGGESTION_CONFIGS.map((item) => {
+    const liveStock = stocksPool.find(
+      (s) => s.ticker.toUpperCase() === item.ticker.toUpperCase()
+    );
+    const fallbackStock = STOCK_UNIVERSE.find(
+      (s) => s.ticker.toUpperCase() === item.ticker.toUpperCase()
+    );
+
+    return {
+      ...item,
+      name: liveStock?.name ?? fallbackStock?.name ?? item.name,
+      price: liveStock?.price ?? fallbackStock?.price ?? 1000,
+    };
+  }).filter((s) => s.quantity > 0 && s.price > 0);
 }
 
 /**
