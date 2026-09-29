@@ -18,7 +18,7 @@ router = APIRouter(
 ) 
 
 # REGISTER
-
+@router.post("/register")
 def register(payload: RegisterRequest):
     try:
         # Check whether email is already registered

@@ -567,14 +567,14 @@ def backfill_all(start_date: date, end_date: date) -> tuple[int, int]:
 
 
 def main():
-    backfill = False
+    backfill = True
 
     if backfill:
-        end_date = datetime(2026, 9, 6)
+        end_date = datetime(2026, 9, 13)
         start_date = datetime(2011, 12, 1)
         written, _ = backfill_all(start_date, end_date)
     else:
-        target = date(2026, 9, 7)
+        target = date(2026, 9, 10)
         written, _ = compute_for_date(target)
 
     if written == 0:

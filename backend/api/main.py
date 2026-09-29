@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import auth, dashboard, analytics, profile
+from api.routers import auth, dashboard, analytics, profile, portfolio, trade
 
 app = FastAPI(title="Paper Trading Platform")
 
@@ -21,3 +21,5 @@ app.include_router(auth.router)
 app.include_router(profile.router)
 app.include_router(dashboard.router)
 app.include_router(analytics.router)
+app.include_router(portfolio.router)
+app.include_router(trade.router)

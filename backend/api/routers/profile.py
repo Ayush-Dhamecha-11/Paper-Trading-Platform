@@ -1,73 +1,41 @@
 import logging
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Cookie
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 from api.dependencies.auth import get_current_user
 from db.database import get_db
 from db.supabase_client import supabase, admin_supabase
 from db.models import UserPreference
 
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["profile"])
 
-def get_session_from_cookies(
-    access_token: str | None,
-    refresh_token: str | None
-):
-    if not access_token or not refresh_token:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication cookies are missing"
-        )
-
-    try:
-        response = supabase.auth.set_session(
-            access_token,
-            refresh_token
-        )
-
-        if not response.user:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid session"
-            )
-
-        return response.user
-
-    except HTTPException:
-        raise
-
-    except Exception:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or expired session"
-        )
-
 
 # GET CURRENT USER
 @router.get("/profile")
-def get_user_profile(db: Session = Depends(get_db),
-    access_token: str | None = Cookie(default=None),
-    refresh_token: str | None = Cookie(default=None),
-):
-    user = get_session_from_cookies(
-        access_token,
-        refresh_token
-    )
+def get_user_profile(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):  
 
-    metadata = user.user_metadata or {}
+    print("user:",  current_user)
+    user_id = current_user["id"]
+    email = current_user.get("email")
+    metadata = current_user.get("user_metadata", {})
 
     preference = db.execute(
         select(UserPreference).where(
-        UserPreference.user_id == user.id
+            UserPreference.user_id == user_id
         )
     ).scalar_one_or_none()
 
     return {
         "name": metadata.get("name"),
-        "email": user.email,
+        "email": email,
         "preference": {
             "theme": preference.theme if preference else "Light",
             "auto_trade": preference.auto_trade if preference else False
@@ -79,13 +47,9 @@ def get_user_profile(db: Session = Depends(get_db),
 @router.post("/name")
 def change_name(
     data: dict,
-    access_token: str | None = Cookie(default=None),
-    refresh_token: str | None = Cookie(default=None),
+    current_user: dict = Depends(get_current_user),
 ):
-    user = get_session_from_cookies(
-        access_token,
-        refresh_token
-    )
+    user_id = current_user["id"]
 
     new_name = data.get("new_name")
 
@@ -97,12 +61,12 @@ def change_name(
 
     new_name = new_name.strip()
 
-    metadata = user.user_metadata or {}
+    metadata = current_user.get("user_metadata", {}).copy()
     metadata["name"] = new_name
 
     try:
         admin_supabase.auth.admin.update_user_by_id(
-            user.id,
+            user_id,
             {
                 "user_metadata": metadata
             }
@@ -121,17 +85,13 @@ def change_name(
 
 
 # CHANGE PASSWORD
-
 @router.post("/password")
 def change_password(
     data: dict,
-    access_token: str | None = Cookie(default=None),
-    refresh_token: str | None = Cookie(default=None),
+    current_user: dict = Depends(get_current_user),
 ):
-    user = get_session_from_cookies(
-        access_token,
-        refresh_token
-    )
+    user_id = current_user["id"]
+    email = current_user.get("email")
 
     old_password = data.get("old_password")
     new_password = data.get("new_password")
@@ -157,7 +117,7 @@ def change_password(
     # Verify old password
     try:
         login_response = supabase.auth.sign_in_with_password({
-            "email": user.email,
+            "email": email,
             "password": old_password
         })
 
@@ -179,7 +139,7 @@ def change_password(
     # Update password
     try:
         admin_supabase.auth.admin.update_user_by_id(
-            user.id,
+            user_id,
             {
                 "password": new_password
             }
@@ -200,14 +160,10 @@ def change_password(
 @router.post("/preferences")
 def update_preferences(
     data: dict,
-    access_token: str | None = Cookie(default=None),
-    refresh_token: str | None = Cookie(default=None),
+    current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    user = get_session_from_cookies(
-        access_token,
-        refresh_token,
-    )
+    user_id = current_user["id"]
 
     theme = data.get("theme")
     auto_trade = data.get("auto_trade")
@@ -215,31 +171,31 @@ def update_preferences(
     if theme is None:
         raise HTTPException(
             status_code=400,
-            detail="Theme is required",
+            detail="Theme is required"
         )
 
     if auto_trade is None:
         raise HTTPException(
             status_code=400,
-            detail="auto_trade is required",
+            detail="auto_trade is required"
         )
 
     if theme not in ["Light", "Dark"]:
         raise HTTPException(
             status_code=400,
-            detail="Theme must be either 'Light' or 'Dark'",
+            detail="Theme must be either 'Light' or 'Dark'"
         )
 
     if not isinstance(auto_trade, bool):
         raise HTTPException(
             status_code=400,
-            detail="auto_trade must be a boolean",
+            detail="auto_trade must be a boolean"
         )
 
     # Find user's preference row
     preference = db.execute(
         select(UserPreference).where(
-            UserPreference.user_id == user.id
+            UserPreference.user_id == user_id
         )
     ).scalar_one_or_none()
 
@@ -251,7 +207,7 @@ def update_preferences(
     # Create row if it doesn't exist
     else:
         preference = UserPreference(
-            user_id=user.id,
+            user_id=user_id,
             theme=theme,
             auto_trade=auto_trade,
         )
@@ -266,7 +222,7 @@ def update_preferences(
 
         raise HTTPException(
             status_code=500,
-            detail="Failed to update user preferences",
+            detail="Failed to update user preferences"
         )
 
     return {
@@ -274,3 +230,4 @@ def update_preferences(
         "theme": theme,
         "auto_trade": auto_trade,
     }
+

@@ -1,11 +1,9 @@
 """
 backend/api/services/analytics_helper.py
 
-All the actual computation behind GET /api/analytics, kept separate from
-the router (api/routers/analytics.py) so the math can be unit tested
-without spinning up FastAPI. Every function here takes plain Python/
-pandas structures in and returns plain structures out - no DB session,
-no request/response objects.
+All the actual computation behind GET /api/analytics.
+Every function here takes plain Python/pandas structures 
+in and returns plain structures out.
 
 Data sources:
     PortfolioSnapshot  - one row/day/portfolio, written by the daily cron
@@ -38,7 +36,6 @@ import logging
 import math
 from datetime import date, timedelta
 from typing import Optional
-
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -71,26 +68,28 @@ def load_snapshots(db: Session, portfolio_id: int) -> pd.DataFrame:
     """All PortfolioSnapshot rows as a DataFrame indexed by date, sorted ascending."""
     rows = db.execute(
         select(PortfolioSnapshot)
-        .where(PortfolioSnapshot.portfolio_id == portfolio_id)
-        .order_by(PortfolioSnapshot.date)
+        .where(PortfolioSnapshot.user_id == portfolio_id)
+        .order_by(PortfolioSnapshot.day)
     ).scalars().all()
 
     if not rows:
-        return pd.DataFrame(columns=["date", "portfolio_value", "cash_balance", "daily_return"])
+        return pd.DataFrame(columns=["day", "portfolio_value", "cash_balance", "daily_return", "cumulative_return", "user_id"])
 
     df = pd.DataFrame(
         [
             {
-                "date": r.date,
+                "day": r.day,
                 "portfolio_value": float(r.portfolio_value),
                 "cash_balance": float(r.cash_balance),
                 "daily_return": float(r.daily_return) if r.daily_return is not None else None,
+                "cumulative_return": float(r.cumulative_return) if r.cumulative_return is not None else None,
+                "user_id": r.user_id
             }
             for r in rows
         ]
     )
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.set_index("date").sort_index()
+    df["day"] = pd.to_datetime(df["day"])
+    df = df.set_index("day").sort_index()
 
     # daily_return may be NULL for early rows if the snapshot step hasn't
     # always populated it - recompute from portfolio_value as a fallback
@@ -111,11 +110,11 @@ def load_benchmark(db: Session, start: date, end: date) -> pd.Series:
     request.
     """
     rows = db.execute(
-        select(PriceHistory.date, PriceHistory.close)
+        select(PriceHistory.day, PriceHistory.close)
         .where(PriceHistory.symbol == MARKET_INDEX_SYMBOL)
-        .where(PriceHistory.date >= start)
-        .where(PriceHistory.date <= end)
-        .order_by(PriceHistory.date)
+        .where(PriceHistory.day >= start)
+        .where(PriceHistory.day <= end)
+        .order_by(PriceHistory.day)
     ).all()
 
     if not rows:
@@ -156,6 +155,9 @@ def compute_max_drawdown(portfolio_value: pd.Series) -> float:
 
 
 def slice_range(df: pd.DataFrame, range_key: str, as_of: date) -> pd.DataFrame:
+    if df.empty:
+        return df
+
     days = RANGE_DAYS[range_key]
     if days is None:
         return df
@@ -370,7 +372,7 @@ def build_return_distribution(trades: list[dict]) -> list[dict]:
 # Current holdings -> allocation charts (sector/stock/pnl/risk)
 def load_open_positions_with_meta(db: Session, portfolio_id: int):
     positions = db.execute(
-        select(Position).where(Position.portfolio_id == portfolio_id)
+        select(Position).where(Position.user_id == portfolio_id)
     ).scalars().all()
 
     if not positions:
@@ -383,14 +385,14 @@ def load_open_positions_with_meta(db: Session, portfolio_id: int):
     }
 
     latest_date = db.execute(
-        select(PriceHistory.date).order_by(PriceHistory.date.desc()).limit(1)
+        select(PriceHistory.day).order_by(PriceHistory.day.desc()).limit(1)
     ).scalar_one_or_none()
     prices = {}
     if latest_date is not None:
         rows = db.execute(
             select(PriceHistory.symbol, PriceHistory.close)
             .where(PriceHistory.symbol.in_(symbols))
-            .where(PriceHistory.date == latest_date)
+            .where(PriceHistory.day == latest_date)
         ).all()
         prices = {sym: float(c) for sym, c in rows}
 
@@ -463,21 +465,21 @@ def build_risk_by_stock(db: Session, positions, lookback_days: int = 90) -> list
     start = date.today() - timedelta(days=lookback_days)
 
     rows = db.execute(
-        select(PriceHistory.symbol, PriceHistory.date, PriceHistory.close)
+        select(PriceHistory.symbol, PriceHistory.day, PriceHistory.close)
         .where(PriceHistory.symbol.in_(symbols))
-        .where(PriceHistory.date >= start)
-        .order_by(PriceHistory.symbol, PriceHistory.date)
+        .where(PriceHistory.day >= start)
+        .order_by(PriceHistory.symbol, PriceHistory.day)
     ).all()
 
     if not rows:
         return []
 
-    df = pd.DataFrame(rows, columns=["symbol", "date", "close"])
+    df = pd.DataFrame(rows, columns=["symbol", "day", "close"])
     df["close"] = df["close"].astype(float)
 
     out = []
     for symbol, group in df.groupby("symbol"):
-        closes = group.sort_values("date")["close"]
+        closes = group.sort_values("day")["close"]
         if len(closes) < 5:
             continue
         daily_ret = closes.pct_change().dropna()

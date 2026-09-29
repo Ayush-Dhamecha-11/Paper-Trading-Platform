@@ -31,7 +31,6 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from api.dependencies.auth import get_current_user
-from api.routers.profile import get_session_from_cookies
 from api.dependencies.portfolio import get_or_create_portfolio
 from api.schemas.dashboard import StockOut, HoldingOut, SectorAllocationOut, PerformancePointOut, DashboardData
 from db.database import get_db
@@ -220,16 +219,10 @@ def get_stocks(db: Session = Depends(get_db)):
 # GET /api/dashboard
 
 @router.get("/dashboard", response_model=DashboardData)
-def get_dashboard(db: Session = Depends(get_db), 
-    access_token: str | None = Cookie(default=None),
-    refresh_token: str | None = Cookie(default=None)):
+def get_dashboard(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
 
-    user = get_session_from_cookies(
-        access_token,
-        refresh_token
-    )
-    print(f"User: {user}")  # Debugging line
-    portfolio = get_or_create_portfolio(db, user.id)     
+    user_id = current_user["id"]
+    portfolio = get_or_create_portfolio(db, user_id)     
 
     holdings, sector_alloc, invested_capital, market_value = build_holding(db, portfolio)
 

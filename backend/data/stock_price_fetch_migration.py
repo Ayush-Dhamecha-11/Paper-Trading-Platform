@@ -275,8 +275,8 @@ class HistDataFetcher:
 def main():
 
     data_fetcher = HistDataFetcher()
-    end_date   = datetime(2026, 9, 8)
-    start_date = datetime(2026, 8, 27)
+    end_date   = datetime(2026, 9, 13)
+    start_date = datetime(2026, 9, 10)
 
     data_fetcher.run_and_fetch(start_date=start_date, end_date=end_date)
 

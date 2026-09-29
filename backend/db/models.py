@@ -32,6 +32,7 @@ class OrderType(str, enum.Enum):
 class OrderStatus(str, enum.Enum):
     FILLED = "filled"
     REJECTED = "rejected"
+    FORCE_CLOSED = "force_closed"
 
 
 # Alembic
@@ -387,6 +388,12 @@ class Position(Base):
         UUID(as_uuid=True),
         primary_key=True,
         nullable=False,
+    )
+
+    margin_locked: Mapped[float] = mapped_column(
+        Numeric, 
+        nullable=False, 
+        default=0
     )
 
     def __repr__(self) -> str:

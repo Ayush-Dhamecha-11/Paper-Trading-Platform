@@ -15,7 +15,7 @@ functions -> assemble the response.
 import logging
 from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Cookie
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,12 +45,12 @@ RANGE_KEYS = ["1W", "1M", "3M", "6M", "1Y", "ALL"]
 # GET /api/analytics
 @router.get("/analytics", response_model=AnalyticsData)
 def get_analytics(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user),
-):
-    portfolio = get_or_create_portfolio(db, user["id"])
+    db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
 
-    snapshots = svc.load_snapshots(db, portfolio.id)
+    user_id = current_user["id"]
+    portfolio = get_or_create_portfolio(db, user_id)
+
+    snapshots = svc.load_snapshots(db, portfolio.user_id)
 
     if not snapshots.empty:
         bench_start = snapshots.index.min().date()
@@ -60,10 +60,10 @@ def get_analytics(
         bench_start = bench_end - timedelta(days=365)
     benchmark = svc.load_benchmark(db, bench_start, bench_end)
 
-    positions, meta, prices = svc.load_open_positions_with_meta(db, portfolio.id)
+    positions, meta, prices = svc.load_open_positions_with_meta(db, portfolio.user_id)
 
     orders = db.execute(
-        select(Order).where(Order.portfolio_id == portfolio.id).order_by(Order.timestamp)
+        select(Order).where(Order.user_id == portfolio.user_id).order_by(Order.timestamp)
     ).scalars().all()
     trades = svc.match_trades_average_cost(orders)
 
