@@ -15,7 +15,12 @@ import PortfolioPage from "./pages/portfolio.tsx";
 import { TradeModalProvider, useTradeModal } from "./context/TradeContext.tsx";
 import TradeFAB from "./components/TradeFAB/TradeFAB.tsx";
 import TradeModal from "./components/TradeModal/TradeModal.tsx";
-import { DASHBOARD_SUMMARY_CACHE_KEY, DASHBOARD_STOCKS_CACHE_KEY, HOLDINGS_CACHE_KEY } from "./utils/dataCache.ts";
+import {
+  DASHBOARD_SUMMARY_CACHE_KEY,
+  DASHBOARD_STOCKS_CACHE_KEY,
+  HOLDINGS_CACHE_KEY,
+  CAPITAL_CACHE_KEY,
+} from "./utils/dataCache.ts";
 
 function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean }) {
   const location = useLocation();
@@ -32,15 +37,21 @@ function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean 
 function GlobalTradePanel() {
   const { isOpen, prefilledStock, prefilledAction, initialBasket, closeTrade } = useTradeModal();
 
-  // Bust relevant caches whenever a trade is executed so pages refresh on next visit
+  // Bust relevant caches whenever a trade is executed or capital updated so pages refresh on next visit
   useEffect(() => {
-    const handleTradeExecuted = () => {
+    const handleDataBust = () => {
       sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
       sessionStorage.removeItem(DASHBOARD_STOCKS_CACHE_KEY);
       sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      sessionStorage.removeItem(CAPITAL_CACHE_KEY);
+      sessionStorage.removeItem("analytics_data");
     };
-    window.addEventListener("trade-executed", handleTradeExecuted);
-    return () => window.removeEventListener("trade-executed", handleTradeExecuted);
+    window.addEventListener("trade-executed", handleDataBust);
+    window.addEventListener("capital-updated", handleDataBust);
+    return () => {
+      window.removeEventListener("trade-executed", handleDataBust);
+      window.removeEventListener("capital-updated", handleDataBust);
+    };
   }, []);
 
   return (

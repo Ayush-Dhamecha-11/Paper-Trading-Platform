@@ -8,12 +8,15 @@ import {
 import {
   DASHBOARD_STOCKS_CACHE_KEY,
   DASHBOARD_SUMMARY_CACHE_KEY,
+  CAPITAL_CACHE_KEY,
   getCachedData,
   setCachedData,
 } from "./dataCache";
 
 type PortfolioSummary = {
   totalPortfolioValue: number;
+  capitalBalance?: number;
+  accountEquity?: number;
   investedCapital: number;
   totalProfit: number;
   todayPnL: number;
@@ -72,6 +75,9 @@ export function warmDashboardData() {
 
       const summary = (await response.json()) as PortfolioSummary;
       setCachedData(DASHBOARD_SUMMARY_CACHE_KEY, summary);
+      if (typeof summary.capitalBalance === "number") {
+        setCachedData(CAPITAL_CACHE_KEY, summary.capitalBalance);
+      }
     });
 
   const profileRequest = authenticatedFetch(`${backendBaseUrl}/api/profile`, {

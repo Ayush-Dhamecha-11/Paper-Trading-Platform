@@ -13,6 +13,8 @@ import {
 import {
   DASHBOARD_STOCKS_CACHE_KEY,
   DASHBOARD_SUMMARY_CACHE_KEY,
+  HOLDINGS_CACHE_KEY,
+  CAPITAL_CACHE_KEY,
   getCachedData,
   setCachedData,
 } from "../utils/dataCache";
@@ -53,6 +55,8 @@ const API_BASE_URL =
 
 type PortfolioSummary = {
   totalPortfolioValue: number;
+  capitalBalance?: number;
+  accountEquity?: number;
   investedCapital: number;
   totalProfit: number;
   todayPnL: number;
@@ -284,12 +288,17 @@ function DashboardPage() {
 
         setPortfolioSummary({
           totalPortfolioValue: backendSummary.totalPortfolioValue,
+          capitalBalance: backendSummary.capitalBalance,
+          accountEquity: backendSummary.accountEquity,
           investedCapital: backendSummary.investedCapital,
           totalProfit: backendSummary.totalProfit,
           todayPnL: backendSummary.todayPnL,
           yesterdayPnL: backendSummary.yesterdayPnL,
         });
         setCachedData(DASHBOARD_SUMMARY_CACHE_KEY, backendSummary);
+        if (typeof backendSummary.capitalBalance === "number") {
+          setCachedData(CAPITAL_CACHE_KEY, backendSummary.capitalBalance);
+        }
       })
       .catch((error) => {
         console.error("Unable to load portfolio summary:", error);
@@ -339,6 +348,21 @@ function DashboardPage() {
     void refreshPortfolioSummary();
     void refreshUserInfo();
 
+    const handleDataRefresh = () => {
+      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+      sessionStorage.removeItem(DASHBOARD_STOCKS_CACHE_KEY);
+      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      sessionStorage.removeItem(CAPITAL_CACHE_KEY);
+      sessionStorage.removeItem("analytics_data");
+      setSummaryLoading(true);
+      void refreshStocks();
+      void refreshPortfolioSummary();
+      void refreshUserInfo();
+    };
+
+    window.addEventListener("trade-executed", handleDataRefresh);
+    window.addEventListener("capital-updated", handleDataRefresh);
+
     const refreshTimer = window.setInterval(() => {
       void refreshStocks();
       void refreshPortfolioSummary();
@@ -348,6 +372,8 @@ function DashboardPage() {
     return () => {
       isMounted = false;
       window.clearInterval(refreshTimer);
+      window.removeEventListener("trade-executed", handleDataRefresh);
+      window.removeEventListener("capital-updated", handleDataRefresh);
     };
   }, [cachedStocks]);
 

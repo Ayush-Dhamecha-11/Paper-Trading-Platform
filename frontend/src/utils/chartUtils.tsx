@@ -12,7 +12,7 @@ import {
   type ChartOptions,
 } from "chart.js";
 import { Doughnut, Line } from "react-chartjs-2";
-import { useState } from "react";
+import { useState, useCallback, useMemo } from "react";
 import "./chartUtils.css";
 
 ChartJS.register(
@@ -60,8 +60,7 @@ function getProfitChartData(
 }
 
 function getAllocationChartData(
-  sectors: SectorSlice[],
-  selectedIndex: number | null
+  sectors: SectorSlice[]
 ): ChartData<"doughnut"> {
   return {
     labels: sectors.map((sector) => sector.name),
@@ -71,12 +70,7 @@ function getAllocationChartData(
         backgroundColor: sectors.map((sector) => sector.color),
         borderWidth: 0,
         borderColor: "transparent",
-        offset: sectors.map((_, index) =>
-          selectedIndex === index ? 8 : 0
-        ),
-        hoverOffset: sectors.map((_, index) =>
-          selectedIndex === index ? 8 : 0
-        ),
+        hoverOffset: 6,
         spacing: 0,
       },
     ],
@@ -191,12 +185,21 @@ export function ProfitLineChart({
   values: number[];
   labels: string[];
 }>) {
+  const chartData = useMemo(() => getProfitChartData(values, labels), [values, labels]);
+  const chartOptions = useMemo(() => profitLineChartOptions(), []);
+
   return (
     <div className="chartjs-shell chartjs-line-shell">
-      <Line data={getProfitChartData(values, labels)} options={profitLineChartOptions()} />
+      <Line data={chartData} options={chartOptions} />
     </div>
   );
 }
+
+const PALETTE = [
+  "#24c6dc", "#5996eb", "#20d89b", "#f5b942", "#f56b6b",
+  "#aa3bff", "#ff7b87", "#38bdf8", "#fb923c", "#a78bfa",
+  "#4ade80", "#f43f5e", "#06b6d4", "#eab308", "#818cf8", "#10b981",
+];
 
 export function AllocationDoughnutChart({
   sectors,
@@ -205,18 +208,40 @@ export function AllocationDoughnutChart({
 }>) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
-  const activeSector = selectedIndex === null ? null : sectors[selectedIndex];
+  const handleSelect = useCallback((nextIndex: number | null) => {
+    setSelectedIndex((prev) => (prev === nextIndex ? prev : nextIndex));
+  }, []);
+
+  const coloredSectors = useMemo(() => {
+    if (!sectors || sectors.length === 0) return [];
+    const rawColors = sectors.map((s) => (s.color ? s.color.trim().toLowerCase() : ""));
+    const hasMissing = rawColors.some((c) => !c || c === "transparent" || c === "none");
+    const firstColor = rawColors[0];
+    const allSame = rawColors.length > 1 && rawColors.every((c) => c === firstColor);
+
+    return sectors.map((s, idx) => ({
+      ...s,
+      color: hasMissing || allSame || !s.color || s.color === "transparent"
+        ? PALETTE[idx % PALETTE.length]
+        : s.color,
+    }));
+  }, [sectors]);
+
+  const chartData = useMemo(() => getAllocationChartData(coloredSectors), [coloredSectors]);
+  const chartOptions = useMemo(
+    () => allocationDoughnutChartOptions(handleSelect),
+    [handleSelect]
+  );
+
+  const activeSector = selectedIndex === null ? null : coloredSectors[selectedIndex];
 
   return (
     <div
       className="chartjs-shell chartjs-doughnut-shell"
-      onMouseLeave={() => setSelectedIndex(null)}
-      onTouchEnd={() => setSelectedIndex(null)}
+      onMouseLeave={() => handleSelect(null)}
+      onTouchEnd={() => handleSelect(null)}
     >
-      <Doughnut
-        data={getAllocationChartData(sectors, selectedIndex)}
-        options={allocationDoughnutChartOptions(setSelectedIndex)}
-      />
+      <Doughnut data={chartData} options={chartOptions} />
       {activeSector && (
         <div
           className="donut-selection-tooltip"

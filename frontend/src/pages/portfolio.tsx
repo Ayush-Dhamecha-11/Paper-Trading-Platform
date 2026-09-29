@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Header from "../components/Header";
+import DataState from "../components/DataState";
+import { ShoppingBag, ArrowRight } from "lucide-react";
 import {
   AllocationChart,
   AnalyticsChartCard,
@@ -9,6 +11,11 @@ import type { AllocationPoint, TimeSeriesPoint } from "../data/analyticsData";
 import { authenticatedFetch, getBackendBaseUrl, getStoredUserInfo, logBackendResponse, logoutUser, setStoredUserInfo, type StoredUserInfo } from "../utils/authUtils";
 import { formatChangePercent, formatCurrency } from "../utils/formatters";
 import { useTradeModal } from "../context/TradeContext";
+import {
+  HOLDINGS_CACHE_KEY,
+  CAPITAL_CACHE_KEY,
+  DASHBOARD_SUMMARY_CACHE_KEY,
+} from "../utils/dataCache";
 import "../pages_css/portfolio.css";
 
 type PortfolioHolding = {
@@ -89,7 +96,7 @@ async function loadPortfolioData(): Promise<PortfolioData> {
 
 function PortfolioPage() {
   const { openTrade } = useTradeModal();
-  const [status, setStatus] = useState<"ready">("ready");
+  const [status, setStatus] = useState<"loading" | "ready" | "empty">("loading");
   const [data, setData] = useState<PortfolioData>(DUMMY_PORTFOLIO_DATA);
   const [holdingSearch, setHoldingSearch] = useState("");
   const [holdingSector, setHoldingSector] = useState("all");
@@ -99,8 +106,27 @@ function PortfolioPage() {
     return { name: stored?.name?.trim() || "User", email: stored?.email?.trim() || "--" };
   });
 
+  const refreshPortfolio = useCallback((isMountedRef: { current: boolean }) => {
+    setStatus("loading");
+    loadPortfolioData()
+      .then((portfolio) => {
+        if (!isMountedRef.current) return;
+        if (!portfolio || !portfolio.holdings || portfolio.holdings.length === 0) {
+          setStatus("empty");
+        } else {
+          setData(portfolio);
+          setStatus("ready");
+        }
+      })
+      .catch(() => {
+        if (isMountedRef.current) {
+          setStatus("empty");
+        }
+      });
+  }, []);
+
   useEffect(() => {
-    let isMounted = true;
+    const mounted = { current: true };
 
     authenticatedFetch(`${getBackendBaseUrl()}/api/profile`, { credentials: "include" })
       .then(async (response) => {
@@ -108,30 +134,48 @@ function PortfolioPage() {
         return (await response.json()) as { name?: string; email?: string; preference?: StoredUserInfo };
       })
       .then((profile) => {
-        if (!isMounted) return;
+        if (!mounted.current) return;
         const nextUserInfo = { name: profile.name, email: profile.email, theme: profile.preference?.theme, auto_trade: profile.preference?.auto_trade };
         setStoredUserInfo(nextUserInfo);
         setUserInfo({ name: nextUserInfo.name?.trim() || "User", email: nextUserInfo.email?.trim() || "--" });
       })
       .catch(() => undefined);
 
-    loadPortfolioData()
-      .then((portfolio) => {
-        if (!isMounted) return;
-        setData(portfolio);
-        setStatus("ready");
-      })
-      .catch(() => {
-        if (isMounted) {
-          setData(DUMMY_PORTFOLIO_DATA);
-          setStatus("ready");
-        }
-      });
+    refreshPortfolio(mounted);
 
-    return () => { isMounted = false; };
-  }, []);
+    const handleDataRefresh = () => {
+      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      sessionStorage.removeItem(CAPITAL_CACHE_KEY);
+      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+      refreshPortfolio(mounted);
+    };
+    window.addEventListener("trade-executed", handleDataRefresh);
+    window.addEventListener("capital-updated", handleDataRefresh);
 
-  const holdings = useMemo(() => data.holdings.map((holding) => {
+    return () => {
+      mounted.current = false;
+      window.removeEventListener("trade-executed", handleDataRefresh);
+      window.removeEventListener("capital-updated", handleDataRefresh);
+    };
+  }, [refreshPortfolio]);
+
+  const hasPerformanceSeries = useMemo(
+    () =>
+      (data.performanceSeries ?? []).length > 0 &&
+      data.performanceSeries.some(
+        (p) => (p.portfolio ?? 0) !== 0 || (p.benchmark ?? 0) !== 0
+      ),
+    [data.performanceSeries]
+  );
+
+  const hasSectorAllocation = useMemo(
+    () =>
+      (data.sectorAllocation ?? []).length > 0 &&
+      data.sectorAllocation.some((p) => p.value > 0),
+    [data.sectorAllocation]
+  );
+
+  const holdings = useMemo(() => (data.holdings ?? []).map((holding) => {
     const marketValue = holding.quantity * holding.currentPrice;
     const investedValue = holding.quantity * holding.averagePrice;
     const profitLoss = marketValue - investedValue;
@@ -184,6 +228,39 @@ function PortfolioPage() {
           <span className="portfolio-live-status"><span /> Live portfolio</span>
         </section>
 
+        {status === "loading" && (
+          <DataState
+            status="loading"
+            title="Loading portfolio"
+            message="Fetching your latest holdings and portfolio performance."
+          />
+        )}
+
+        {status === "empty" && (
+          <section className="portfolio-empty-state" role="status">
+            <div className="portfolio-empty-icon-wrap" aria-hidden="true">
+              <ShoppingBag size={34} />
+            </div>
+            <h2>You don&apos;t have any stocks in your portfolio so nothing to show</h2>
+            <p>
+              Your portfolio is currently empty. Start building your portfolio by exploring stocks and placing your first trade!
+            </p>
+            <div className="portfolio-empty-actions">
+              <button
+                type="button"
+                className="portfolio-btn-primary"
+                onClick={() => openTrade()}
+              >
+                <span>Start Trading</span>
+                <ArrowRight size={16} aria-hidden="true" />
+              </button>
+              <a href="/dashboard" className="portfolio-btn-secondary">
+                Explore Stocks
+              </a>
+            </div>
+          </section>
+        )}
+
         {status === "ready" && <>
           <section className="portfolio-stat-grid" aria-label="Portfolio performance statistics">
             <article><span>Portfolio value</span><strong>{formatCurrency(data.summary.portfolioValue)}</strong><small>Current market value</small></article>
@@ -192,14 +269,20 @@ function PortfolioPage() {
             <article className={data.summary.todayPnL >= 0 ? "positive" : "negative"}><span>Today&apos;s P/L</span><strong>{formatCurrency(data.summary.todayPnL)}</strong><small>Daily movement</small></article>
           </section>
 
-          <section className="portfolio-chart-grid">
-            <AnalyticsChartCard title="Portfolio performance" eyebrow="Growth">
-              <BenchmarkComparisonChart points={data.performanceSeries} />
-            </AnalyticsChartCard>
-            <AnalyticsChartCard title="Sector allocation" eyebrow="Composition">
-              <AllocationChart points={data.sectorAllocation} />
-            </AnalyticsChartCard>
-          </section>
+          {(hasPerformanceSeries || hasSectorAllocation) && (
+            <section className="portfolio-chart-grid">
+              {hasPerformanceSeries && (
+                <AnalyticsChartCard title="Portfolio performance" eyebrow="Growth">
+                  <BenchmarkComparisonChart points={data.performanceSeries} />
+                </AnalyticsChartCard>
+              )}
+              {hasSectorAllocation && (
+                <AnalyticsChartCard title="Sector allocation" eyebrow="Composition">
+                  <AllocationChart points={data.sectorAllocation} />
+                </AnalyticsChartCard>
+              )}
+            </section>
+          )}
 
           <section className="portfolio-holdings-panel">
             <div className="portfolio-section-heading">

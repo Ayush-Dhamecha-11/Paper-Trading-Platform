@@ -15,7 +15,6 @@ import {
   TrendingDown,
   AlertTriangle,
   CheckCircle2,
-  Pencil,
   Trash2,
   Plus,
   Minus,
@@ -40,6 +39,7 @@ import {
   setCachedData,
 } from "../../utils/dataCache";
 import { executeBatchTrade, updateCapital, fetchDailySuggestions } from "../../utils/tradeApi";
+import { isMarketClosed } from "../../utils/marketUtils";
 import "./TradeModal.css";
 
 export type BasketOrder = {
@@ -82,30 +82,48 @@ type Props = {
 // ─── Data helpers ────────────────────────────────────────────────────────────
 
 async function fetchCapital(): Promise<number> {
-  const cachedCapital = getCachedData<number>(CAPITAL_CACHE_KEY);
-  if (typeof cachedCapital === "number") return cachedCapital;
-
-  const cachedSummary = getCachedData<{ totalPortfolioValue?: number; availableCapital?: number; investedCapital?: number }>(
-    DASHBOARD_SUMMARY_CACHE_KEY
-  );
-  if (cachedSummary) {
-    const val = cachedSummary.availableCapital ?? cachedSummary.totalPortfolioValue ?? 0;
-    return val;
-  }
-
+  // Always query /api/dashboard first when fetching capital for TradeModal to get the latest capitalBalance
   try {
     const res = await authenticatedFetch(`${getBackendBaseUrl()}/api/dashboard`, {
       credentials: "include",
     });
-    logBackendResponse(res, "GET /api/dashboard (trade modal)");
-    if (!res.ok) return 0;
-    const data = (await res.json()) as { totalPortfolioValue?: number; availableCapital?: number };
-    const val = data.availableCapital ?? data.totalPortfolioValue ?? 0;
-    setCachedData(CAPITAL_CACHE_KEY, val);
-    return val;
+    logBackendResponse(res, "GET /api/dashboard (trade modal capital)");
+    if (res.ok) {
+      const data = (await res.json()) as {
+        totalPortfolioValue?: number;
+        capitalBalance?: number;
+        accountEquity?: number;
+        investedCapital?: number;
+        availableCapital?: number;
+      };
+      const val =
+        typeof data.capitalBalance === "number"
+          ? data.capitalBalance
+          : (data.availableCapital ?? data.totalPortfolioValue ?? 0);
+      setCachedData(CAPITAL_CACHE_KEY, val);
+      return val;
+    }
   } catch {
-    return 0;
+    // If network request fails, fall back to cached values
   }
+
+  const cachedCapital = getCachedData<number>(CAPITAL_CACHE_KEY);
+  if (typeof cachedCapital === "number") return cachedCapital;
+
+  const cachedSummary = getCachedData<{
+    totalPortfolioValue?: number;
+    capitalBalance?: number;
+    accountEquity?: number;
+    availableCapital?: number;
+    investedCapital?: number;
+  }>(DASHBOARD_SUMMARY_CACHE_KEY);
+  if (cachedSummary) {
+    if (typeof cachedSummary.capitalBalance === "number") return cachedSummary.capitalBalance;
+    if (typeof cachedSummary.availableCapital === "number") return cachedSummary.availableCapital;
+    return cachedSummary.totalPortfolioValue ?? 0;
+  }
+
+  return 0;
 }
 
 async function fetchHoldings(): Promise<Holding[]> {
@@ -156,21 +174,39 @@ export default function TradeModal({
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [capitalLoading, setCapitalLoading] = useState(true);
 
-  // ── Capital inline editing ──
-  const [editingCapital, setEditingCapital] = useState(false);
-  const [capitalDraft, setCapitalDraft] = useState("");
+  // ── Capital management (Add / Remove) ──
+  const [managingCapital, setManagingCapital] = useState(false);
+  const [capitalAction, setCapitalAction] = useState<"add" | "remove">("add");
+  const [capitalDelta, setCapitalDelta] = useState("");
   const [capitalSaving, setCapitalSaving] = useState(false);
+  const [capitalSuccess, setCapitalSuccess] = useState(false);
+  const [capitalError, setCapitalError] = useState("");
 
   // ── Submission status ──
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeError, setTradeError] = useState<string>("");
+  const [lastExecutedCount, setLastExecutedCount] = useState<number>(0);
 
   const searchRef = useRef<HTMLDivElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
+  const autoCloseTimerRef = useRef<number | null>(null);
+
+  // Clean up auto-close timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoCloseTimerRef.current) {
+        window.clearTimeout(autoCloseTimerRef.current);
+      }
+    };
+  }, []);
 
   // ── Initialize or reset modal ──
   useEffect(() => {
     if (!isOpen) {
+      if (autoCloseTimerRef.current) {
+        window.clearTimeout(autoCloseTimerRef.current);
+        autoCloseTimerRef.current = null;
+      }
       // Clear candidate state immediately when closed to prevent any ghost "1" UI
       setCandidateStock(null);
       setSearchQuery("");
@@ -178,7 +214,12 @@ export default function TradeModal({
       setBasket([]);
       setTradeStatus("idle");
       setTradeError("");
-      setEditingCapital(false);
+      setLastExecutedCount(0);
+      setManagingCapital(false);
+      setCapitalAction("add");
+      setCapitalDelta("");
+      setCapitalSuccess(false);
+      setCapitalError("");
       return;
     }
 
@@ -234,17 +275,28 @@ export default function TradeModal({
     }
   }, [isOpen, prefilledStock, prefilledAction, initialBasket]);
 
-  // ── Escape key & body overflow ──
+  // ── Escape key & background scroll lock ──
   useEffect(() => {
     if (!isOpen) return;
+
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handleKeyDown);
+
+    // Prevent background scrolling on both body and html elements
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverscroll = document.body.style.overscrollBehavior;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overscrollBehavior = prevBodyOverscroll;
     };
   }, [isOpen, onClose]);
 
@@ -507,15 +559,23 @@ export default function TradeModal({
     shortSellOrders,
   } = basketAnalysis;
 
-  // Can submit check: basket has at least 1 order, no shortfall, not submitting
+  const marketClosed = isMarketClosed(allStocks);
+
+  // Can submit check: basket has at least 1 order, no shortfall, not submitting, market is open
   const canSubmit =
     basket.length > 0 &&
     !isOverCapital &&
     tradeStatus !== "submitting" &&
-    tradeStatus !== "success";
+    tradeStatus !== "success" &&
+    !marketClosed;
 
   // ── Order execution ──
   const handleSubmitOrders = async () => {
+    if (marketClosed) {
+      setTradeStatus("error");
+      setTradeError("You cannot trade right now because the stock market is closed.");
+      return;
+    }
     if (!canSubmit) return;
 
     setTradeStatus("submitting");
@@ -535,31 +595,96 @@ export default function TradeModal({
       const nextCap = Math.max(0, postTradeBalance);
       setAvailableCapital(nextCap);
       setCachedData(CAPITAL_CACHE_KEY, nextCap);
+      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      sessionStorage.removeItem("analytics_data");
 
+      setLastExecutedCount(basket.length);
+      setBasket([]);
       setTradeStatus("success");
+
       // Notify other pages to refresh
       window.dispatchEvent(new CustomEvent("trade-executed"));
+      window.dispatchEvent(new CustomEvent("capital-updated"));
+
+      // Auto close the trade modal after brief success presentation
+      if (autoCloseTimerRef.current) {
+        window.clearTimeout(autoCloseTimerRef.current);
+      }
+      autoCloseTimerRef.current = window.setTimeout(() => {
+        onClose();
+      }, 1200);
     } catch (err) {
       setTradeStatus("error");
       setTradeError(err instanceof Error ? err.message : "Trade execution failed. Please try again.");
     }
   };
 
-  // ── Capital update handler ──
+  // ── Capital management calculation & handler (Add / Remove) ──
+  const deltaVal = parseFloat(capitalDelta.replace(/[^0-9.]/g, "")) || 0;
+  const previewNewCapital =
+    capitalAction === "add"
+      ? availableCapital + deltaVal
+      : Math.max(0, availableCapital - deltaVal);
+
   const handleSaveCapital = async () => {
-    const newCap = parseFloat(capitalDraft.replace(/[^0-9.]/g, ""));
-    if (isNaN(newCap) || newCap < 0) return;
+    const delta = parseFloat(capitalDelta.replace(/[^0-9.]/g, ""));
+    if (isNaN(delta) || delta <= 0) {
+      setCapitalError("Please enter a valid amount greater than 0");
+      return;
+    }
+    if (capitalAction === "remove" && delta > availableCapital) {
+      setCapitalError(`Cannot withdraw more than available capital (${formatCurrency(availableCapital)})`);
+      return;
+    }
+
+    const newCap = capitalAction === "add" ? availableCapital + delta : Math.max(0, availableCapital - delta);
     setCapitalSaving(true);
+    setCapitalError("");
     try {
       await updateCapital(newCap);
       setAvailableCapital(newCap);
       setCachedData(CAPITAL_CACHE_KEY, newCap);
-      setEditingCapital(false);
+      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      sessionStorage.removeItem("analytics_data");
+      setCapitalSuccess(true);
+
+      // Notify other pages to refresh immediately
+      window.dispatchEvent(new CustomEvent("capital-updated"));
+      window.dispatchEvent(new CustomEvent("trade-executed"));
+
+      // Auto close the trade modal
+      if (autoCloseTimerRef.current) {
+        window.clearTimeout(autoCloseTimerRef.current);
+      }
+      autoCloseTimerRef.current = window.setTimeout(() => {
+        setManagingCapital(false);
+        setCapitalDelta("");
+        setCapitalSuccess(false);
+        onClose();
+      }, 650);
     } catch {
       // Optimistic update
       setAvailableCapital(newCap);
       setCachedData(CAPITAL_CACHE_KEY, newCap);
-      setEditingCapital(false);
+      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      sessionStorage.removeItem("analytics_data");
+      setCapitalSuccess(true);
+
+      window.dispatchEvent(new CustomEvent("capital-updated"));
+      window.dispatchEvent(new CustomEvent("trade-executed"));
+
+      if (autoCloseTimerRef.current) {
+        window.clearTimeout(autoCloseTimerRef.current);
+      }
+      autoCloseTimerRef.current = window.setTimeout(() => {
+        setManagingCapital(false);
+        setCapitalDelta("");
+        setCapitalSuccess(false);
+        onClose();
+      }, 650);
     } finally {
       setCapitalSaving(false);
     }
@@ -575,6 +700,12 @@ export default function TradeModal({
       aria-label="Trade & Portfolio Rebalance Panel"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
+      }}
+      onWheel={(e) => {
+        if (e.target === e.currentTarget) e.preventDefault();
+      }}
+      onTouchMove={(e) => {
+        if (e.target === e.currentTarget) e.preventDefault();
       }}
     >
       <div className="tm-panel">
@@ -594,53 +725,161 @@ export default function TradeModal({
           </button>
         </div>
 
-        {/* Available Capital Bar (with Edit) */}
+        {/* Market Closed Alert */}
+        {marketClosed && (
+          <div className="tm-market-closed-banner" role="alert">
+            <AlertTriangle size={18} aria-hidden="true" />
+            <div className="tm-market-closed-content">
+              <strong>Market is Closed</strong>
+              <p>You cannot trade right now because the market is closed. Trading will resume when the market opens.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Available Capital Bar with Add / Withdraw Actions */}
         <div className="tm-capital-bar">
-          {!editingCapital ? (
+          {!managingCapital ? (
             <div className="tm-capital-display">
-              <span className="tm-capital-tag">Available Capital</span>
-              <strong className="tm-capital-amount">
-                {capitalLoading ? "..." : formatCurrency(availableCapital)}
-              </strong>
-              <button
-                type="button"
-                className="tm-capital-pencil"
-                onClick={() => {
-                  setEditingCapital(true);
-                  setCapitalDraft(String(availableCapital));
-                }}
-                title="Edit capital"
-              >
-                <Pencil size={13} aria-hidden="true" />
-                <span>Edit</span>
-              </button>
+              <div className="tm-capital-info">
+                <span className="tm-capital-tag">Available Capital</span>
+                <strong className="tm-capital-amount">
+                  {capitalLoading ? "..." : formatCurrency(availableCapital)}
+                </strong>
+              </div>
+              <div className="tm-capital-action-btns">
+                <button
+                  type="button"
+                  className="tm-btn-cap-pill tm-btn-cap-add"
+                  onClick={() => {
+                    setManagingCapital(true);
+                    setCapitalAction("add");
+                    setCapitalDelta("");
+                    setCapitalError("");
+                  }}
+                  title="Add funds to capital"
+                >
+                  <Plus size={13} aria-hidden="true" />
+                  <span>Add Funds</span>
+                </button>
+                <button
+                  type="button"
+                  className="tm-btn-cap-pill tm-btn-cap-remove"
+                  onClick={() => {
+                    setManagingCapital(true);
+                    setCapitalAction("remove");
+                    setCapitalDelta("");
+                    setCapitalError("");
+                  }}
+                  title="Withdraw / Remove funds from capital"
+                >
+                  <Minus size={13} aria-hidden="true" />
+                  <span>Withdraw</span>
+                </button>
+              </div>
             </div>
           ) : (
-            <div className="tm-capital-edit-inline">
-              <span className="tm-capital-tag">Set Capital (₹):</span>
-              <input
-                type="number"
-                min="0"
-                className="tm-capital-input-sm"
-                value={capitalDraft}
-                onChange={(e) => setCapitalDraft(e.target.value)}
-                autoFocus
-              />
-              <button
-                type="button"
-                className="tm-btn-save-cap"
-                onClick={() => void handleSaveCapital()}
-                disabled={capitalSaving}
-              >
-                {capitalSaving ? "Saving…" : "Save"}
-              </button>
-              <button
-                type="button"
-                className="tm-btn-cancel-cap"
-                onClick={() => setEditingCapital(false)}
-              >
-                Cancel
-              </button>
+            <div className="tm-capital-manager">
+              <div className="tm-cap-manager-header">
+                <div className="tm-cap-toggle-group">
+                  <button
+                    type="button"
+                    className={`tm-cap-toggle ${capitalAction === "add" ? "active add" : ""}`}
+                    onClick={() => {
+                      setCapitalAction("add");
+                      setCapitalError("");
+                    }}
+                  >
+                    <Plus size={13} aria-hidden="true" />
+                    <span>Add Funds</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`tm-cap-toggle ${capitalAction === "remove" ? "active remove" : ""}`}
+                    onClick={() => {
+                      setCapitalAction("remove");
+                      setCapitalError("");
+                    }}
+                  >
+                    <Minus size={13} aria-hidden="true" />
+                    <span>Withdraw Funds</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="tm-cap-close-btn"
+                  onClick={() => {
+                    setManagingCapital(false);
+                    setCapitalDelta("");
+                    setCapitalError("");
+                  }}
+                  aria-label="Close capital manager"
+                >
+                  <X size={15} aria-hidden="true" />
+                </button>
+              </div>
+
+              <div className="tm-cap-manager-row">
+                <div className="tm-cap-input-wrap">
+                  <span className="tm-cap-currency">₹</span>
+                  <input
+                    type="number"
+                    min="1"
+                    step="any"
+                    placeholder="Enter amount"
+                    className="tm-cap-amount-input"
+                    value={capitalDelta}
+                    onChange={(e) => {
+                      setCapitalDelta(e.target.value);
+                      if (capitalError) setCapitalError("");
+                    }}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="tm-cap-calc-preview">
+                  <span className="tm-cap-calc-label">
+                    {capitalAction === "add" ? "New Capital:" : "Remaining:"}
+                  </span>
+                  <strong className={`tm-cap-calc-val ${capitalAction === "add" ? "val-add" : "val-remove"}`}>
+                    {formatCurrency(previewNewCapital)}
+                  </strong>
+                </div>
+
+                <div className="tm-cap-actions">
+                  <button
+                    type="button"
+                    className="tm-btn-cap-confirm"
+                    onClick={() => void handleSaveCapital()}
+                    disabled={capitalSaving || capitalSuccess || deltaVal <= 0 || (capitalAction === "remove" && deltaVal > availableCapital)}
+                  >
+                    {capitalSuccess
+                      ? "Success! Closing…"
+                      : capitalSaving
+                      ? "Processing…"
+                      : capitalAction === "add"
+                      ? `Confirm +${deltaVal > 0 ? formatCurrency(deltaVal) : ""}`
+                      : `Confirm -${deltaVal > 0 ? formatCurrency(deltaVal) : ""}`}
+                  </button>
+                  <button
+                    type="button"
+                    className="tm-btn-cap-cancel"
+                    onClick={() => {
+                      setManagingCapital(false);
+                      setCapitalDelta("");
+                      setCapitalError("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+
+              {capitalError && (
+                <div className="tm-cap-error" role="alert">
+                  <AlertTriangle size={13} aria-hidden="true" />
+                  <span>{capitalError}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -809,7 +1048,17 @@ export default function TradeModal({
             )}
           </div>
 
-          {basket.length === 0 ? (
+          {tradeStatus === "success" ? (
+            <div className="tm-basket-success-state">
+              <CheckCircle2 size={32} className="tm-basket-success-icon" aria-hidden="true" />
+              <p className="tm-basket-success-title">Order Execution Completed</p>
+              <p className="tm-basket-success-desc">
+                {lastExecutedCount > 0
+                  ? `Successfully executed ${lastExecutedCount} order${lastExecutedCount !== 1 ? "s" : ""}. Your basket has been cleared.`
+                  : "All orders executed. Basket cleared."}
+              </p>
+            </div>
+          ) : basket.length === 0 ? (
             <div className="tm-basket-empty">
               <p>Your basket is empty. Search a stock above to add buy and sell orders together.</p>
               <button
@@ -999,11 +1248,13 @@ export default function TradeModal({
                       type="button"
                       className="tm-inline-btn"
                       onClick={() => {
-                        setEditingCapital(true);
-                        setCapitalDraft(String(Math.ceil(netRequired)));
+                        setManagingCapital(true);
+                        setCapitalAction("add");
+                        setCapitalDelta(String(Math.ceil(shortfall)));
+                        setCapitalError("");
                       }}
                     >
-                      update your capital
+                      add funds to capital
                     </button>{" "}
                     to proceed.
                   </p>
@@ -1034,7 +1285,7 @@ export default function TradeModal({
             <CheckCircle2 size={20} aria-hidden="true" />
             <div>
               <strong>Orders Placed Successfully!</strong>
-              <p>Executed {basket.length} order{basket.length !== 1 ? "s" : ""}. Capital updated.</p>
+              <p>Executed {lastExecutedCount} order{lastExecutedCount !== 1 ? "s" : ""}. Basket cleared and capital updated.</p>
             </div>
           </div>
         )}
@@ -1071,8 +1322,11 @@ export default function TradeModal({
                 onClick={() => void handleSubmitOrders()}
                 disabled={!canSubmit}
                 aria-disabled={!canSubmit}
+                title={marketClosed ? "Market is closed. Cannot place orders." : undefined}
               >
-                {tradeStatus === "submitting" ? (
+                {marketClosed ? (
+                  "Market Closed"
+                ) : tradeStatus === "submitting" ? (
                   "Placing Orders…"
                 ) : (
                   <>

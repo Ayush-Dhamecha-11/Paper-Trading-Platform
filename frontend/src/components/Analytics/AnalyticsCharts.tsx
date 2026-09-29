@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   BarElement,
   CategoryScale,
@@ -23,6 +24,45 @@ import type {
 import "./AnalyticsCharts.css";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler);
+
+export const CHART_PALETTE = [
+  "#24c6dc", // bright cyan
+  "#5996eb", // royal blue
+  "#20d89b", // emerald mint
+  "#f5b942", // amber gold
+  "#f56b6b", // coral red
+  "#aa3bff", // purple violet
+  "#ff7b87", // rose pink
+  "#38bdf8", // sky blue
+  "#fb923c", // vivid orange
+  "#a78bfa", // lavender
+  "#4ade80", // lime green
+  "#f43f5e", // hot pink
+  "#06b6d4", // dark cyan
+  "#eab308", // bright yellow
+  "#818cf8", // indigo
+  "#10b981", // green
+];
+
+export function ensureDistinctColors<T extends { color?: string }>(items: T[]): (T & { color: string })[] {
+  if (!items || items.length === 0) return [];
+
+  const rawColors = items.map((item) => (item.color ? item.color.trim().toLowerCase() : ""));
+  const hasMissing = rawColors.some((c) => !c || c === "transparent" || c === "none");
+  const firstColor = rawColors[0];
+  const allSame = rawColors.length > 1 && rawColors.every((c) => c === firstColor);
+
+  return items.map((item, index) => {
+    let finalColor = item.color;
+    if (hasMissing || allSame || !finalColor || finalColor === "transparent") {
+      finalColor = CHART_PALETTE[index % CHART_PALETTE.length];
+    }
+    return {
+      ...item,
+      color: finalColor,
+    };
+  });
+}
 
 const chartText = "#9fb3c8";
 const chartGrid = "rgba(148, 163, 184, 0.18)";
@@ -197,9 +237,11 @@ export function PortfolioPnlChart({ points }: Readonly<{ points: TimeSeriesPoint
 }
 
 export function AllocationChart({ points }: Readonly<{ points: AllocationPoint[] }>) {
+  const coloredPoints = useMemo(() => ensureDistinctColors(points), [points]);
+
   return (
     <AllocationDoughnutChart
-      sectors={points.map((point) => ({
+      sectors={coloredPoints.map((point) => ({
         name: point.label,
         value: point.value,
         color: point.color,
@@ -217,14 +259,15 @@ export function HorizontalBarChart({
   valueSuffix?: string;
   showTotal?: boolean;
 }>) {
-  const total = points.reduce((sum, point) => sum + point.value, 0);
+  const coloredPoints = useMemo(() => ensureDistinctColors(points), [points]);
+  const total = coloredPoints.reduce((sum, point) => sum + point.value, 0);
   const data: ChartData<"bar"> = {
-    labels: points.map((point) => point.label),
+    labels: coloredPoints.map((point) => point.label),
     datasets: [
       {
         label: showTotal ? `Total ${total.toLocaleString("en-IN")}${valueSuffix}` : "Value",
-        data: points.map((point) => point.value),
-        backgroundColor: points.map((point) => point.color),
+        data: coloredPoints.map((point) => point.value),
+        backgroundColor: coloredPoints.map((point) => point.color),
         borderRadius: 8,
       },
     ],

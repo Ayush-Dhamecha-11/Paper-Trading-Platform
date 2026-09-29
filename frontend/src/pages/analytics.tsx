@@ -28,7 +28,14 @@ import {
   setStoredUserInfo,
   type StoredUserInfo,
 } from "../utils/authUtils";
-import { getCachedData, setCachedData } from "../utils/dataCache";
+import {
+  getCachedData,
+  setCachedData,
+  DASHBOARD_SUMMARY_CACHE_KEY,
+  HOLDINGS_CACHE_KEY,
+} from "../utils/dataCache";
+import { useTradeModal } from "../context/TradeContext";
+import { ShoppingBag, ArrowRight } from "lucide-react";
 import "../pages_css/analytics.css";
 
 const API_BASE_URL =
@@ -55,7 +62,7 @@ async function loadAnalyticsData(): Promise<AnalyticsData> {
     throw new Error("Analytics data failed to load.");
   }
 
-  return DUMMY_ANALYTICS_DATA //(await response.json()) as AnalyticsData;
+  return (await response.json()) as AnalyticsData;
 }
 
 function ChartRangeSwitcher({
@@ -92,36 +99,137 @@ function AnalyticsPage() {
       email: storedUserInfo?.email?.trim() || "--",
     };
   });
+  const { openTrade } = useTradeModal();
   const [benchmarkRange, setBenchmarkRange] = useState<AnalyticsRangeKey>("6M");
   const [portfolioRange, setPortfolioRange] = useState<AnalyticsRangeKey>("6M");
   const [riskRange, setRiskRange] = useState<AnalyticsRangeKey>("6M");
   const [alphaRange, setAlphaRange] = useState<AnalyticsRangeKey>("6M");
-  const [analyticsStatus, setAnalyticsStatus] = useState<"loading" | "ready" | "error">(
-    () => (getCachedAnalyticsData() ? "ready" : "loading")
-  );
+  const [analyticsStatus, setAnalyticsStatus] = useState<"loading" | "ready" | "empty" | "error">("loading");
   const [analyticsRequestKey, setAnalyticsRequestKey] = useState(0);
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData>(
     () => getCachedAnalyticsData() ?? DUMMY_ANALYTICS_DATA
   );
   const benchmarkSeries = useMemo(
-    () => analyticsData.performanceSeries[benchmarkRange],
-    [analyticsData.performanceSeries, benchmarkRange]
+    () => analyticsData?.performanceSeries?.[benchmarkRange] ?? [],
+    [analyticsData?.performanceSeries, benchmarkRange]
   );
   const portfolioSeries = useMemo(
-    () => analyticsData.performanceSeries[portfolioRange],
-    [analyticsData.performanceSeries, portfolioRange]
+    () => analyticsData?.performanceSeries?.[portfolioRange] ?? [],
+    [analyticsData?.performanceSeries, portfolioRange]
   );
   const riskSeries = useMemo(
-    () => analyticsData.performanceSeries[riskRange],
-    [analyticsData.performanceSeries, riskRange]
+    () => analyticsData?.performanceSeries?.[riskRange] ?? [],
+    [analyticsData?.performanceSeries, riskRange]
   );
   const alphaSeries = useMemo(
-    () => analyticsData.performanceSeries[alphaRange],
-    [analyticsData.performanceSeries, alphaRange]
+    () => analyticsData?.performanceSeries?.[alphaRange] ?? [],
+    [analyticsData?.performanceSeries, alphaRange]
   );
   const stockAllocationTotal = useMemo(
-    () => analyticsData.stockAllocation.reduce((sum, stock) => sum + stock.value, 0),
+    () => (analyticsData?.stockAllocation ?? []).reduce((sum, stock) => sum + stock.value, 0),
+    [analyticsData?.stockAllocation]
+  );
+
+  // ─── Guard checks to only show charts that actually have values ────────────
+  const hasBenchmarkSeries = useMemo(
+    () =>
+      benchmarkSeries.length > 0 &&
+      benchmarkSeries.some(
+        (p) => (p.portfolio ?? 0) !== 0 || (p.benchmark ?? 0) !== 0
+      ),
+    [benchmarkSeries]
+  );
+
+  const hasPortfolioSeries = useMemo(
+    () =>
+      portfolioSeries.length > 0 &&
+      portfolioSeries.some(
+        (p) => (p.portfolio ?? 0) !== 0 || (p.pnl ?? 0) !== 0
+      ),
+    [portfolioSeries]
+  );
+
+  const hasSectorAllocation = useMemo(
+    () =>
+      (analyticsData.sectorAllocation ?? []).length > 0 &&
+      analyticsData.sectorAllocation.some((p) => p.value > 0),
+    [analyticsData.sectorAllocation]
+  );
+
+  const hasStockAllocation = useMemo(
+    () =>
+      (analyticsData.stockAllocation ?? []).length > 0 &&
+      analyticsData.stockAllocation.some((p) => p.value > 0),
     [analyticsData.stockAllocation]
+  );
+
+  const hasPnlByStock = useMemo(
+    () =>
+      (analyticsData.pnlByStock ?? []).length > 0 &&
+      analyticsData.pnlByStock.some((p) => p.value !== 0),
+    [analyticsData.pnlByStock]
+  );
+
+  const hasRiskSeries = useMemo(
+    () =>
+      riskSeries.length > 0 &&
+      riskSeries.some(
+        (p) => (p.drawdown ?? 0) !== 0 || (p.volatility ?? 0) !== 0
+      ),
+    [riskSeries]
+  );
+
+  const hasRiskByStock = useMemo(
+    () =>
+      (analyticsData.riskByStock ?? []).length > 0 &&
+      analyticsData.riskByStock.some(
+        (p) => p.returnPct !== 0 || p.volatilityPct !== 0
+      ),
+    [analyticsData.riskByStock]
+  );
+
+  const hasReturnDistribution = useMemo(
+    () =>
+      (analyticsData.returnDistribution ?? []).length > 0 &&
+      analyticsData.returnDistribution.some((p) => p.value > 0),
+    [analyticsData.returnDistribution]
+  );
+
+  const hasTradingMetrics = useMemo(
+    () =>
+      (analyticsData.tradingMetrics ?? []).length > 0 &&
+      analyticsData.tradingMetrics.some(
+        (m) => m.value && m.value !== "--" && m.value !== "0"
+      ),
+    [analyticsData.tradingMetrics]
+  );
+
+  const hasTradePnl = useMemo(
+    () =>
+      (analyticsData.tradePnl ?? []).length > 0 &&
+      analyticsData.tradePnl.some((v) => v !== 0),
+    [analyticsData.tradePnl]
+  );
+
+  const hasMonthlyReturns = useMemo(
+    () =>
+      (analyticsData.monthlyReturns ?? []).length > 0 &&
+      analyticsData.monthlyReturns.some((m) => m.value !== 0),
+    [analyticsData.monthlyReturns]
+  );
+
+  const hasAlphaSeries = useMemo(
+    () =>
+      alphaSeries.length > 0 &&
+      alphaSeries.some((p) => (p.alpha ?? 0) !== 0),
+    [alphaSeries]
+  );
+
+  const hasSummaryMetrics = useMemo(
+    () =>
+      (analyticsData.summary ?? []).length > 0 &&
+      analyticsData.summary.some((m) => m.value && m.value !== "--"),
+    [analyticsData.summary]
   );
 
   useEffect(() => {
@@ -181,9 +289,18 @@ function AnalyticsPage() {
         }
 
         console.debug("[AnalyticsPage] Analytics data ready", data);
-        setCachedData(ANALYTICS_CACHE_KEY, data);
-        setAnalyticsData(data);
-        setAnalyticsStatus("ready");
+        const isEmpty =
+          !data ||
+          ((!data.stockAllocation || data.stockAllocation.length === 0) &&
+           (!data.sectorAllocation || data.sectorAllocation.length === 0));
+
+        if (isEmpty) {
+          setAnalyticsStatus("empty");
+        } else {
+          setCachedData(ANALYTICS_CACHE_KEY, data);
+          setAnalyticsData(data);
+          setAnalyticsStatus("ready");
+        }
       })
       .catch((error) => {
         if (!isMounted) {
@@ -191,10 +308,23 @@ function AnalyticsPage() {
         }
 
         console.error("[AnalyticsPage] Analytics data failed to load", error);
-        setAnalyticsStatus(cachedAnalyticsData ? "ready" : "error");
+        if (cachedAnalyticsData && (cachedAnalyticsData.stockAllocation?.length > 0 || cachedAnalyticsData.sectorAllocation?.length > 0)) {
+          setAnalyticsStatus("ready");
+        } else {
+          setAnalyticsStatus("empty");
+        }
       });
 
     void refreshAnalyticsData();
+
+    const handleDataRefresh = () => {
+      sessionStorage.removeItem(ANALYTICS_CACHE_KEY);
+      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      void refreshAnalyticsData();
+    };
+    window.addEventListener("trade-executed", handleDataRefresh);
+    window.addEventListener("capital-updated", handleDataRefresh);
 
     const refreshTimer = window.setInterval(() => {
       void refreshAnalyticsData();
@@ -203,6 +333,8 @@ function AnalyticsPage() {
     return () => {
       isMounted = false;
       window.clearInterval(refreshTimer);
+      window.removeEventListener("trade-executed", handleDataRefresh);
+      window.removeEventListener("capital-updated", handleDataRefresh);
     };
   }, [analyticsRequestKey]);
 
@@ -239,13 +371,38 @@ function AnalyticsPage() {
               <h1>Portfolio intelligence</h1>
             </div>
           </section>
-          {analyticsStatus === "loading" ? (
+          {analyticsStatus === "loading" && (
             <DataState
               status="loading"
               title="Loading analytics data"
               message="Fetching the latest portfolio analytics."
             />
-          ) : (
+          )}
+          {analyticsStatus === "empty" && (
+            <section className="analytics-empty-state" role="status">
+              <div className="analytics-empty-icon-wrap" aria-hidden="true">
+                <ShoppingBag size={34} />
+              </div>
+              <h2>You don&apos;t have any stocks in your portfolio so nothing to show</h2>
+              <p>
+                Your portfolio is currently empty. Start trading stocks to unlock detailed performance analytics, benchmark comparisons, and sector allocation charts.
+              </p>
+              <div className="analytics-empty-actions">
+                <button
+                  type="button"
+                  className="analytics-btn-primary"
+                  onClick={() => openTrade()}
+                >
+                  <span>Start Trading</span>
+                  <ArrowRight size={16} aria-hidden="true" />
+                </button>
+                <a href="/dashboard" className="analytics-btn-secondary">
+                  Explore Stocks
+                </a>
+              </div>
+            </section>
+          )}
+          {analyticsStatus === "error" && (
             <DataState
               status="error"
               title="Analytics data failed to load"
@@ -274,108 +431,134 @@ function AnalyticsPage() {
           </div>
         </section>
 
-        <AnalyticsMetricCards metrics={analyticsData.summary} />
+        {hasSummaryMetrics && (
+          <AnalyticsMetricCards metrics={analyticsData.summary} />
+        )}
 
         <section className="analytics-grid">
-          <AnalyticsChartCard
-            title="Portfolio vs NIFTY 50"
-            eyebrow="Performance"
-            wide
-            actions={
-              <ChartRangeSwitcher
-                range={benchmarkRange}
-                onRangeChange={setBenchmarkRange}
-                label="Portfolio benchmark time range"
+          {hasBenchmarkSeries && (
+            <AnalyticsChartCard
+              title="Portfolio vs NIFTY 50"
+              eyebrow="Performance"
+              wide
+              actions={
+                <ChartRangeSwitcher
+                  range={benchmarkRange}
+                  onRangeChange={setBenchmarkRange}
+                  label="Portfolio benchmark time range"
+                />
+              }
+            >
+              <BenchmarkComparisonChart points={benchmarkSeries} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasPortfolioSeries && (
+            <AnalyticsChartCard
+              title="Portfolio Value / P&L"
+              eyebrow="Growth"
+              actions={
+                <ChartRangeSwitcher
+                  range={portfolioRange}
+                  onRangeChange={setPortfolioRange}
+                  label="Portfolio value time range"
+                />
+              }
+            >
+              <PortfolioPnlChart points={portfolioSeries} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasSectorAllocation && (
+            <AnalyticsChartCard title="Sector Allocation" eyebrow="Composition">
+              <AllocationChart points={analyticsData.sectorAllocation} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasStockAllocation && (
+            <AnalyticsChartCard
+              title="Stock Allocation"
+              eyebrow="Concentration"
+              actions={<span className="analytics-total-badge">Total {stockAllocationTotal}%</span>}
+            >
+              <HorizontalBarChart points={analyticsData.stockAllocation} showTotal />
+            </AnalyticsChartCard>
+          )}
+
+          {hasPnlByStock && (
+            <AnalyticsChartCard title="P&L by Stock" eyebrow="Contribution">
+              <HorizontalBarChart points={analyticsData.pnlByStock} valueSuffix="" />
+            </AnalyticsChartCard>
+          )}
+
+          {hasRiskSeries && (
+            <AnalyticsChartCard
+              title="Drawdown & Rolling Volatility"
+              eyebrow="Risk"
+              wide
+              actions={
+                <ChartRangeSwitcher
+                  range={riskRange}
+                  onRangeChange={setRiskRange}
+                  label="Risk analytics time range"
+                />
+              }
+            >
+              <DrawdownVolatilityChart points={riskSeries} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasRiskByStock && (
+            <AnalyticsChartCard title="Risk vs Return by Stock" eyebrow="Advanced risk">
+              <RiskReturnScatter points={analyticsData.riskByStock} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasReturnDistribution && (
+            <AnalyticsChartCard title="Daily Return Distribution" eyebrow="Distribution">
+              <HorizontalBarChart points={analyticsData.returnDistribution} valueSuffix=" days" />
+            </AnalyticsChartCard>
+          )}
+
+          {hasTradingMetrics && (
+            <AnalyticsChartCard title="Trading Performance" eyebrow="Trades">
+              <AnalyticsMetricCards metrics={analyticsData.tradingMetrics} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasTradePnl && (
+            <AnalyticsChartCard title="Cumulative P&L by Trade" eyebrow="Consistency">
+              <TradePnlChart tradePnl={analyticsData.tradePnl} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasMonthlyReturns && (
+            <AnalyticsChartCard title="Monthly Returns Heatmap" eyebrow="Seasonality">
+              <MonthlyReturnsHeatmap months={analyticsData.monthlyReturns} />
+            </AnalyticsChartCard>
+          )}
+
+          {hasAlphaSeries && (
+            <AnalyticsChartCard
+              title="Cumulative Alpha"
+              eyebrow="Outperformance"
+              actions={
+                <ChartRangeSwitcher
+                  range={alphaRange}
+                  onRangeChange={setAlphaRange}
+                  label="Cumulative alpha time range"
+                />
+              }
+            >
+              <PortfolioPnlChart
+                points={alphaSeries.map((point) => ({
+                  ...point,
+                  portfolio: point.alpha ?? 0,
+                  pnl: point.alpha ?? 0,
+                }))}
               />
-            }
-          >
-            <BenchmarkComparisonChart points={benchmarkSeries} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard
-            title="Portfolio Value / P&L"
-            eyebrow="Growth"
-            actions={
-              <ChartRangeSwitcher
-                range={portfolioRange}
-                onRangeChange={setPortfolioRange}
-                label="Portfolio value time range"
-              />
-            }
-          >
-            <PortfolioPnlChart points={portfolioSeries} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard title="Sector Allocation" eyebrow="Composition">
-            <AllocationChart points={analyticsData.sectorAllocation} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard
-            title="Stock Allocation"
-            eyebrow="Concentration"
-            actions={<span className="analytics-total-badge">Total {stockAllocationTotal}%</span>}
-          >
-            <HorizontalBarChart points={analyticsData.stockAllocation} showTotal />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard title="P&L by Stock" eyebrow="Contribution">
-            <HorizontalBarChart points={analyticsData.pnlByStock} valueSuffix="" />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard
-            title="Drawdown & Rolling Volatility"
-            eyebrow="Risk"
-            wide
-            actions={
-              <ChartRangeSwitcher
-                range={riskRange}
-                onRangeChange={setRiskRange}
-                label="Risk analytics time range"
-              />
-            }
-          >
-            <DrawdownVolatilityChart points={riskSeries} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard title="Risk vs Return by Stock" eyebrow="Advanced risk">
-            <RiskReturnScatter points={analyticsData.riskByStock} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard title="Daily Return Distribution" eyebrow="Distribution">
-            <HorizontalBarChart points={analyticsData.returnDistribution} valueSuffix=" days" />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard title="Trading Performance" eyebrow="Trades">
-            <AnalyticsMetricCards metrics={analyticsData.tradingMetrics} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard title="Cumulative P&L by Trade" eyebrow="Consistency">
-            <TradePnlChart tradePnl={analyticsData.tradePnl} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard title="Monthly Returns Heatmap" eyebrow="Seasonality">
-            <MonthlyReturnsHeatmap months={analyticsData.monthlyReturns} />
-          </AnalyticsChartCard>
-
-          <AnalyticsChartCard
-            title="Cumulative Alpha"
-            eyebrow="Outperformance"
-            actions={
-              <ChartRangeSwitcher
-                range={alphaRange}
-                onRangeChange={setAlphaRange}
-                label="Cumulative alpha time range"
-              />
-            }
-          >
-            <PortfolioPnlChart
-              points={alphaSeries.map((point) => ({
-                ...point,
-                portfolio: point.alpha ?? 0,
-                pnl: point.alpha ?? 0,
-              }))}
-            />
-          </AnalyticsChartCard>
+            </AnalyticsChartCard>
+          )}
         </section>
       </div>
     </main>
