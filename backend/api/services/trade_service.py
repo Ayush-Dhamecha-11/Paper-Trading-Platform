@@ -1,75 +1,78 @@
 """
-backend/api/services/trade_service.py
+Paper-trading execution and short-position accounting.
 
-Everything that changes money or shares goes through here
-the router (api/routers/trade.py) only validates
-the request shape and calls execute_batch().
+All money/share mutations go through this module.
 
-SHORT SELLING: modelled on real SEBI cash-segment rules
+Important accounting rules:
 
-  - Opening a short (SELL exceeding currently held quantity) locks
-    INITIAL_MARGIN_RATE (20%) of the trade's value from cash_balance,
-    The other 80% of "proceeds" is NOT credited as
-    spendable cash - a short is a liability (shares owed back), not a
-    sale you can spend the full proceeds of.
-  - Every day, each open short is re-priced at that day's close. If the
-    locked margin no longer covers MAINTENANCE_MARGIN_RATE (25%) of
-    current exposure, the position is force-closed (bought back) at
-    that day's close
-  - Closing a short (BUY that covers an existing short position)
-    realizes P&L as (entry_price - exit_price) * qty_covered - a short
-    profits when price falls - and releases the proportional locked
-    margin back to cash_balance.
-
-BATCH SEMANTICS: a basket of orders is all-or-nothing. Every order is
-validated against the portfolio's state as it would be AFTER every
-earlier order in the same batch has applied (so basket-level netting
-across a buy and a sell of different stocks works correctly), and the
-whole batch commits or rolls back together in one DB transaction -
-matches the frontend's "net required cash" framing, which assumes the
-basket executes as a single unit.
+* API trade prices are NEVER trusted from the browser. Execution uses the
+  latest market price obtained by the backend, unless an explicit
+  `execution_prices` mapping is supplied by trusted internal code/tests.
+* Long buys consume cash at execution price.
+* Long sells add sale proceeds to cash and realize P&L against average cost.
+* Opening/adding a short locks 20% initial margin and does not credit the
+  short-sale proceeds to spendable cash.
+* Covering a short releases proportional margin and realizes
+  (entry - cover_price) * covered_quantity.
+* Position average entry prices are recalculated with Decimal arithmetic.
+* Batch execution is all-or-nothing and locks the portfolio/affected
+  positions to prevent concurrent orders from overspending cash.
 """
+
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime
-from typing import Optional
+from datetime import date
+from decimal import Decimal, InvalidOperation
+from typing import Mapping, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from api.services.market_data import MarketDataError, get_market_quotes, today_ist
 from db.models import Order, OrderStatus, OrderType, Portfolio, Position, PriceHistory
 
 logger = logging.getLogger(__name__)
 
-INITIAL_MARGIN_RATE = 0.20      # SEBI cash-segment minimum upfront margin (VaR+ELM)
-MAINTENANCE_MARGIN_RATE = 0.25  # common broker maintenance buffer above the regulatory floor
-
-# Smallest absolute quantity a position can sit at before we just treat
-# it as flat and delete the row - avoids leaving 1e-9-share dust
-# positions around from floating point rounding.
-QUANTITY_EPSILON = 1e-6
+INITIAL_MARGIN_RATE = Decimal("0.20")
+MAINTENANCE_MARGIN_RATE = Decimal("0.25")
+QUANTITY_EPSILON = Decimal("0.000001")
+ZERO = Decimal("0")
 
 
 class TradeError(Exception):
-    """Raised for any order/batch that cannot be executed as requested.
-    The router catches this and returns it as the HTTP error body -
-    kept as plain text messages since TradeModal.tsx just surfaces
-    response.text() directly to the user."""
+    """Raised when an order/batch cannot be executed."""
+
+
+def D(value) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise TradeError(f"Invalid numeric value: {value!r}") from exc
 
 
 @dataclass
 class OrderRequest:
     symbol: str
     action: str
-    quantity: float
-    price: float
+    quantity: float | Decimal
+    # Kept for backward compatibility with older callers. This value is not
+    # used by execute_batch for API execution.
+    price: float | Decimal | None = None
 
     def __post_init__(self):
+        self.symbol = self.symbol.strip().upper()
+        self.action = self.action.strip().lower()
         if self.action not in ("buy", "sell"):
             raise TradeError(f"Invalid action '{self.action}' for {self.symbol}")
-        if self.quantity <= 0:
+        qty = D(self.quantity)
+        if not qty.is_finite() or qty <= ZERO:
             raise TradeError(f"Quantity must be positive for {self.symbol}")
+        self.quantity = qty
+
 
 @dataclass
 class OrderResult:
@@ -79,6 +82,7 @@ class OrderResult:
     price: float
     status: str = "filled"
 
+
 @dataclass
 class BatchResult:
     success: bool
@@ -86,49 +90,73 @@ class BatchResult:
     orders: list[OrderResult] = field(default_factory=list)
 
 
-# Price lookup - the one and only source of truth for order pricing
-
-def get_latest_prices(db: Session, symbols: list[str]) -> dict[str, float]:
-    """Batch version of get_latest_price - one query instead of N, for
-    pricing an entire basket at once."""
-    if not symbols:
-        return {}
-
-    latest_date = db.execute(
-        select(PriceHistory.day).order_by(PriceHistory.day.desc()).limit(1)
-    ).scalar_one_or_none()
-    if latest_date is None:
-        return {}
-
-    rows = db.execute(
-        select(PriceHistory.symbol, PriceHistory.close)
-        .where(PriceHistory.symbol.in_(symbols))
-        .where(PriceHistory.day == latest_date)
-    ).all()
-    return {sym: float(close) for sym, close in rows}
-
-
 @dataclass
 class WorkingPosition:
-    quantity: float
-    avg_entry_price: float
-    margin_locked: float
+    quantity: Decimal
+    avg_entry_price: Decimal
+    margin_locked: Decimal
+
+
+def get_latest_prices(db: Session, symbols: list[str]) -> dict[str, float]:
+    """Compatibility helper: return the latest backend market prices."""
+    unique_symbols = sorted(set(symbols))
+    if not unique_symbols:
+        return {}
+
+    try:
+        quotes = get_market_quotes(unique_symbols)
+    except MarketDataError as exc:
+        logger.warning("Live market price lookup failed: %s", exc)
+        return {}
+
+    return {symbol: quote.current_price for symbol, quote in quotes.items()}
+
+
+def calculate_capital_delta(
+    current_cash: Decimal | float,
+    target_cash: Decimal | float,
+) -> tuple[Decimal, str]:
+    """Return (delta, transaction_type) for a requested target cash balance."""
+    current = D(current_cash)
+    target = D(target_cash)
+    if not current.is_finite() or current < ZERO:
+        raise TradeError("Current cash balance is invalid")
+    if not target.is_finite() or target < ZERO:
+        raise TradeError("Target capital must be a finite non-negative amount")
+    delta = target - current
+    if delta > ZERO:
+        return delta, "deposit"
+    if delta < ZERO:
+        return delta, "withdrawal"
+    return ZERO, "none"
+
+
+def _validate_price(price: Decimal, symbol: str) -> Decimal:
+    if not price.is_finite() or price <= ZERO:
+        raise TradeError(f"Invalid execution price for {symbol}")
+    return price
 
 
 def apply_buy(
     working_positions: dict[str, WorkingPosition],
-    cash: float,
+    cash: Decimal,
     symbol: str,
-    qty: float,
-    price: float,
-) -> tuple[dict[str, WorkingPosition], float]:
-    pos = working_positions.get(symbol, WorkingPosition(0.0, 0.0, 0.0))
+    qty: Decimal | float,
+    price: Decimal | float,
+) -> tuple[dict[str, WorkingPosition], Decimal]:
+    qty = D(qty)
+    price = _validate_price(D(price), symbol)
+    cash = D(cash)
+    if qty <= ZERO:
+        raise TradeError(f"Quantity must be positive for {symbol}")
 
-    if pos.quantity < 0:
-        # Buying to cover an existing short (fully or partially).
+    pos = working_positions.get(symbol, WorkingPosition(ZERO, ZERO, ZERO))
+
+    if pos.quantity < ZERO:
+        # Buy-to-cover an existing short.
         cover_qty = min(qty, -pos.quantity)
-        pnl = (pos.avg_entry_price - price) * cover_qty  # short profits when price falls
-        margin_released = pos.margin_locked * (cover_qty / -pos.quantity)
+        pnl = (pos.avg_entry_price - price) * cover_qty
+        margin_released = pos.margin_locked * (cover_qty / (-pos.quantity))
 
         cash += pnl + margin_released
         new_qty = pos.quantity + cover_qty
@@ -136,19 +164,19 @@ def apply_buy(
 
         remaining_buy_qty = qty - cover_qty
         if remaining_buy_qty > QUANTITY_EPSILON:
-            # Order flips the position from short to long: the part
-            # beyond what was needed to cover starts a fresh long at
-            # this order's price.
-            cash -= remaining_buy_qty * price
-            new_qty = remaining_buy_qty
-            pos = WorkingPosition(new_qty, price, 0.0)
+            # The excess crosses from short to long and starts a new long at
+            # this order's execution price.
+            cost = remaining_buy_qty * price
+            if cash < cost:
+                raise TradeError(
+                    f"Insufficient cash for {symbol}: need {cost:.2f}, have {cash:.2f}"
+                )
+            cash -= cost
+            pos = WorkingPosition(remaining_buy_qty, price, ZERO)
         else:
             pos = WorkingPosition(new_qty, pos.avg_entry_price, new_margin)
 
     else:
-        # Ordinary long buy (new or adding to an existing long) -
-        # weighted-average cost basis, same as portfolio/engine.py's
-        # position upsert logic.
         cost = qty * price
         if cash < cost:
             raise TradeError(
@@ -156,7 +184,11 @@ def apply_buy(
             )
         cash -= cost
         new_qty = pos.quantity + qty
-        new_avg = (pos.avg_entry_price * pos.quantity + price * qty) / new_qty if new_qty > 0 else 0.0
+        new_avg = (
+            ((pos.avg_entry_price * pos.quantity) + (price * qty)) / new_qty
+            if new_qty > ZERO
+            else ZERO
+        )
         pos = WorkingPosition(new_qty, new_avg, pos.margin_locked)
 
     if abs(pos.quantity) < QUANTITY_EPSILON:
@@ -169,15 +201,21 @@ def apply_buy(
 
 def apply_sell(
     working_positions: dict[str, WorkingPosition],
-    cash: float,
+    cash: Decimal,
     symbol: str,
-    qty: float,
-    price: float,
-) -> tuple[dict[str, WorkingPosition], float]:
-    pos = working_positions.get(symbol, WorkingPosition(0.0, 0.0, 0.0))
+    qty: Decimal | float,
+    price: Decimal | float,
+) -> tuple[dict[str, WorkingPosition], Decimal]:
+    qty = D(qty)
+    price = _validate_price(D(price), symbol)
+    cash = D(cash)
+    if qty <= ZERO:
+        raise TradeError(f"Quantity must be positive for {symbol}")
 
-    if pos.quantity > 0:
-        # Selling out of an existing long (fully or partially).
+    pos = working_positions.get(symbol, WorkingPosition(ZERO, ZERO, ZERO))
+
+    if pos.quantity > ZERO:
+        # Sell an existing long first.
         sell_qty = min(qty, pos.quantity)
         proceeds = sell_qty * price
         cash += proceeds
@@ -185,15 +223,13 @@ def apply_sell(
 
         remaining_sell_qty = qty - sell_qty
         if remaining_sell_qty > QUANTITY_EPSILON:
-            # Sells past what was held: the excess OPENS a new short at
-            # this order's price - matches TradeModal's short-sell
-            # warning UI, which allows exactly this.
+            # The excess opens a new short.
             trade_value = remaining_sell_qty * price
             margin_needed = trade_value * INITIAL_MARGIN_RATE
             if cash < margin_needed:
                 raise TradeError(
                     f"Insufficient margin to short {symbol}: need "
-                    f"{margin_needed:.2f} margin, have {cash:.2f} cash available"
+                    f"{margin_needed:.2f}, have {cash:.2f} cash available"
                 )
             cash -= margin_needed
             pos = WorkingPosition(-remaining_sell_qty, price, margin_needed)
@@ -201,21 +237,27 @@ def apply_sell(
             pos = WorkingPosition(new_qty, pos.avg_entry_price, pos.margin_locked)
 
     else:
-        # Adding to an existing short, or opening a fresh one.
+        # Add to an existing short or open a fresh one.
         trade_value = qty * price
         margin_needed = trade_value * INITIAL_MARGIN_RATE
         if cash < margin_needed:
             raise TradeError(
                 f"Insufficient margin to short {symbol}: need "
-                f"{margin_needed:.2f} margin, have {cash:.2f} cash available"
+                f"{margin_needed:.2f}, have {cash:.2f} cash available"
             )
         cash -= margin_needed
-        new_qty = pos.quantity - qty  # more negative
-        # Weighted-average entry price across the combined short size.
+        new_qty = pos.quantity - qty
+        old_short_qty = -pos.quantity
         new_avg = (
-            (pos.avg_entry_price * -pos.quantity + price * qty) / -new_qty
-        ) if new_qty != 0 else 0.0
-        pos = WorkingPosition(new_qty, new_avg, pos.margin_locked + margin_needed)
+            (pos.avg_entry_price * old_short_qty + price * qty) / (-new_qty)
+            if new_qty != ZERO
+            else ZERO
+        )
+        pos = WorkingPosition(
+            new_qty,
+            new_avg,
+            pos.margin_locked + margin_needed,
+        )
 
     if abs(pos.quantity) < QUANTITY_EPSILON:
         working_positions.pop(symbol, None)
@@ -225,48 +267,115 @@ def apply_sell(
     return working_positions, cash
 
 
+def _equity_for_working_positions(
+    cash: Decimal,
+    working_positions: Mapping[str, WorkingPosition],
+    prices: Mapping[str, Decimal],
+) -> Decimal:
+    """Mark a working state to a supplied price map."""
+    equity = D(cash)
+    for symbol, pos in working_positions.items():
+        price = _validate_price(D(prices[symbol]), symbol)
+        if pos.quantity > ZERO:
+            equity += pos.quantity * price
+        elif pos.quantity < ZERO:
+            equity += pos.margin_locked + (pos.avg_entry_price - price) * (-pos.quantity)
+    return equity
 
-# Batch execution - the main entrypoint
-def execute_batch(db: Session, portfolio: Portfolio, requests: list[OrderRequest]) -> BatchResult:
+
+def _holdings_value_for_working_positions(
+    working_positions: Mapping[str, WorkingPosition],
+    prices: Mapping[str, Decimal],
+) -> Decimal:
+    """Return signed market value of holdings only; free cash is excluded."""
+    value = ZERO
+    for symbol, pos in working_positions.items():
+        price = _validate_price(D(prices[symbol]), symbol)
+        value += pos.quantity * price
+    return value
+
+
+def execute_batch(
+    db: Session,
+    portfolio: Portfolio,
+    requests: list[OrderRequest],
+    *,
+    execution_prices: Mapping[str, Decimal | float] | None = None,
+) -> BatchResult:
     if not requests:
         raise TradeError("No orders submitted")
 
-    symbols = list({r.symbol for r in requests})
-    prices = {r.symbol: r.price for r in requests}
+    # Lock the account row so two concurrent requests cannot both spend the
+    # same cash balance.
+    locked_portfolio = db.execute(
+        select(Portfolio)
+        .where(Portfolio.user_id == portfolio.user_id)
+        .with_for_update()
+    ).scalar_one()
+    portfolio = locked_portfolio
 
-    missing = [s for s in symbols if s not in prices]
+    symbols = sorted({request.symbol for request in requests})
+
+    if execution_prices is None:
+        try:
+            live_quotes = get_market_quotes(symbols)
+        except MarketDataError as exc:
+            raise TradeError(f"Unable to obtain current market prices: {exc}") from exc
+        prices = {
+            symbol: D(live_quotes[symbol].current_price)
+            for symbol in symbols
+            if symbol in live_quotes
+        }
+    else:
+        prices = {symbol: D(execution_prices[symbol]) for symbol in symbols if symbol in execution_prices}
+
+    missing = [symbol for symbol in symbols if symbol not in prices]
     if missing:
-        raise TradeError(f"No current price available for: {', '.join(missing)}")
+        raise TradeError(
+            "No current execution price is available for: " + ", ".join(missing)
+        )
 
     existing_positions = db.execute(
-        select(Position).where(Position.user_id == portfolio.user_id).where(Position.symbol.in_(symbols))
+        select(Position)
+        .where(Position.user_id == portfolio.user_id)
+        .where(Position.symbol.in_(symbols))
+        .with_for_update()
     ).scalars().all()
 
     working_positions: dict[str, WorkingPosition] = {
-        p.symbol: WorkingPosition(float(p.quantity), float(p.avg_entry_price), float(p.margin_locked))
+        p.symbol: WorkingPosition(
+            D(p.quantity),
+            D(p.avg_entry_price),
+            D(p.margin_locked),
+        )
         for p in existing_positions
     }
-    cash = float(portfolio.cash_balance)
+    cash = D(portfolio.cash_balance)
 
     results: list[OrderResult] = []
 
-    # Validate + apply the whole batch against working state first - if
-    # ANY order fails, we raise before touching the DB at all, so a bad
-    # 3rd order in a 5-order basket can't partially execute the first 2.
+    # First validate/apply the complete basket in memory. No DB mutation occurs
+    # until every request succeeds.
     for req in requests:
-        price = prices[req.symbol]
-
+        price = _validate_price(prices[req.symbol], req.symbol)
         if req.action == "buy":
-            working_positions, cash = apply_buy(working_positions, cash, req.symbol, req.quantity, price)
+            working_positions, cash = apply_buy(
+                working_positions, cash, req.symbol, req.quantity, price
+            )
         else:
-            working_positions, cash = apply_sell(working_positions, cash, req.symbol, req.quantity, price)
+            working_positions, cash = apply_sell(
+                working_positions, cash, req.symbol, req.quantity, price
+            )
 
-        results.append(OrderResult(symbol=req.symbol, action=req.action, quantity=req.quantity, price=price))
+        results.append(
+            OrderResult(
+                symbol=req.symbol,
+                action=req.action,
+                quantity=float(req.quantity),
+                price=float(price),
+            )
+        )
 
-    # Working state validated cleanly - now persist everything in one
-    # go: upsert positions, delete flattened ones, write the Order log,
-    # update cash_balance. All within the caller's existing db session/
-    # transaction, so a failure anywhere here still rolls back as a unit.
     existing_by_symbol = {p.symbol: p for p in existing_positions}
 
     for symbol in symbols:
@@ -293,25 +402,31 @@ def execute_batch(db: Session, portfolio: Portfolio, requests: list[OrderRequest
                 )
             )
 
-    for res in results:
+    for result in results:
         db.add(
             Order(
                 user_id=portfolio.user_id,
-                symbol=res.symbol,
-                quantity=res.quantity,
-                price=res.price,
-                order_type=OrderType.BUY.value if res.action == "buy" else OrderType.SELL.value,
+                symbol=result.symbol,
+                quantity=D(result.quantity),
+                price=D(result.price),
+                order_type=OrderType.BUY.value if result.action == "buy" else OrderType.SELL.value,
                 status=OrderStatus.FILLED.value,
             )
         )
 
     portfolio.cash_balance = cash
+    portfolio.portfolio_value = _holdings_value_for_working_positions(
+        working_positions,
+        prices,
+    )
 
     db.commit()
 
     logger.info(
-        f"Executed batch of {len(results)} order(s) for portfolio {portfolio.user_id}: "
-        f"{[(r.symbol, r.action, r.quantity, r.price) for r in results]}"
+        "Executed batch of %s order(s) for portfolio %s: %s",
+        len(results),
+        portfolio.user_id,
+        [(r.symbol, r.action, r.quantity, r.price) for r in results],
     )
 
     return BatchResult(
@@ -321,59 +436,77 @@ def execute_batch(db: Session, portfolio: Portfolio, requests: list[OrderRequest
     )
 
 
-# Daily mark-to-market - called from jobs/daily_pipeline.py, not the API
+def _historical_closing_prices(
+    db: Session,
+    symbols: list[str],
+    as_of: date,
+) -> dict[str, Decimal]:
+    if not symbols:
+        return {}
+
+    rows = db.execute(
+        select(PriceHistory.symbol, PriceHistory.close)
+        .where(PriceHistory.symbol.in_(symbols))
+        .where(PriceHistory.day == as_of)
+    ).all()
+    return {symbol: D(close) for symbol, close in rows}
+
+
 def mark_to_market_all_shorts(db: Session, as_of: Optional[date] = None) -> int:
     """
-    Runs once daily (see jobs/daily_pipeline.py). For every open short
-    position across every portfolio, checks whether locked margin still
-    covers MAINTENANCE_MARGIN_RATE of current exposure at today's close;
-    force-closes (buys back) any that don't, exactly like a broker's
-    automatic margin-call square-off.
-
-    Returns the number of positions force-closed.
+    Apply the maintenance-margin rule using the requested day's EOD close.
+    The old implementation used whatever date happened to be globally latest
+    in PriceHistory, which could be a different day from `as_of`.
     """
-    as_of = as_of or date.today()
+    as_of = as_of or today_ist()
 
     short_positions = db.execute(
-        select(Position).where(Position.quantity < 0)
+        select(Position)
+        .where(Position.quantity < 0)
+        .with_for_update()
     ).scalars().all()
 
     if not short_positions:
         return 0
 
-    symbols = list({p.symbol for p in short_positions})
-    prices = get_latest_prices(db, symbols)
-
+    symbols = sorted({p.symbol for p in short_positions})
+    prices = _historical_closing_prices(db, symbols, as_of)
     force_closed_count = 0
 
-    # Group by portfolio so each portfolio's cash_balance is only
-    # touched once per portfolio, not once per position.
-    by_portfolio: dict[int, list[Position]] = {}
-    for p in short_positions:
-        by_portfolio.setdefault(p.user_id, []).append(p)
+    by_portfolio: dict[object, list[Position]] = {}
+    for position in short_positions:
+        by_portfolio.setdefault(position.user_id, []).append(position)
 
     for portfolio_id, positions in by_portfolio.items():
-        portfolio = db.get(Portfolio, portfolio_id)
+        portfolio = db.execute(
+            select(Portfolio)
+            .where(Portfolio.user_id == portfolio_id)
+            .with_for_update()
+        ).scalar_one_or_none()
         if portfolio is None:
             continue
 
-        cash = float(portfolio.cash_balance)
+        cash = D(portfolio.cash_balance)
 
         for pos in positions:
             price = prices.get(pos.symbol)
             if price is None:
-                logger.warning(f"No price for {pos.symbol} on {as_of} - skipping margin check")
+                logger.warning(
+                    "No historical close for %s on/before %s; skipping margin check",
+                    pos.symbol,
+                    as_of,
+                )
                 continue
 
-            qty_short = -float(pos.quantity)
+            qty_short = -D(pos.quantity)
             exposure = qty_short * price
             required_margin = exposure * MAINTENANCE_MARGIN_RATE
 
-            if float(pos.margin_locked) >= required_margin:
-                continue  # sufficiently margined, nothing to do
+            if D(pos.margin_locked) >= required_margin:
+                continue
 
-            pnl = (float(pos.avg_entry_price) - price) * qty_short
-            cash += float(pos.margin_locked) + pnl
+            pnl = (D(pos.avg_entry_price) - price) * qty_short
+            cash += D(pos.margin_locked) + pnl
 
             db.add(
                 Order(
@@ -389,8 +522,13 @@ def mark_to_market_all_shorts(db: Session, as_of: Optional[date] = None) -> int:
             force_closed_count += 1
 
             logger.warning(
-                f"Margin call: force-closed short {pos.symbol} in portfolio "
-                f"{portfolio_id} at {price} (P&L={pnl:.2f}, as_of={as_of})"
+                "Margin call: force-closed short %s in portfolio %s at %s "
+                "(P&L=%s, as_of=%s)",
+                pos.symbol,
+                portfolio_id,
+                price,
+                pnl,
+                as_of,
             )
 
         portfolio.cash_balance = cash

@@ -1,8 +1,11 @@
 from pydantic import BaseModel
 
-# Response schemas - mirror portfolio.tsx's PortfolioData exactly
+
 class PortfolioSummaryOut(BaseModel):
+    # Value of holdings only. Free cash/capital is separate.
     portfolioValue: float
+    capitalBalance: float
+    accountEquity: float
     investedCapital: float
     totalProfit: float
     todayPnL: float
@@ -30,6 +33,11 @@ class PortfolioHoldingOut(BaseModel):
     averagePrice: float
     currentPrice: float
     previousClose: float
+    # Backend-computed values are returned as well so frontend calculations
+    # cannot accidentally use entry price as the current mark.
+    unrealizedPnL: float
+    dayPnL: float
+    marketValue: float
 
 
 class PortfolioData(BaseModel):

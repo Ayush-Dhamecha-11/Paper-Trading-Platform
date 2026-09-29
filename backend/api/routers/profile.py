@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from api.dependencies.auth import get_current_user
 from db.database import get_db
 from db.supabase_client import supabase, admin_supabase
+from api.dependencies.portfolio import get_or_create_portfolio
 from db.models import UserPreference
 
 
@@ -32,10 +33,12 @@ def get_user_profile(
             UserPreference.user_id == user_id
         )
     ).scalar_one_or_none()
+    portfolio = get_or_create_portfolio(db, user_id)
 
     return {
         "name": metadata.get("name"),
         "email": email,
+        "capitalBalance": float(portfolio.cash_balance),
         "preference": {
             "theme": preference.theme if preference else "Light",
             "auto_trade": preference.auto_trade if preference else False

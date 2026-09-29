@@ -72,7 +72,7 @@ class HistDataFetcher:
                 else:
                     ticker = yf.Ticker(f'{symbol}.NS')
 
-                df = ticker.history(start=start_date, end=end_date, interval=interval, auto_adjust=True)
+                df = ticker.history(start=start_date, end=end_date, interval=interval, auto_adjust=False)
 
                 if df.empty:
                     logger.warning(f"  No price data for {symbol} — skipping")
@@ -135,10 +135,11 @@ class HistDataFetcher:
                     ticker = yf.Ticker(symbol)
                 else:
                     ticker = yf.Ticker(f"{symbol}.NS")
-                hist = ticker.history(start=start, end=end, interval="1d", auto_adjust=True)
+                hist = ticker.history(start=start, end=end, interval="1d", auto_adjust=False)
             
                 if hist.empty:
-                    return None
+                    logger.warning(f"No EOD data for {symbol} on {target_date}")
+                    continue
             
                 row = hist.iloc[0]
 
@@ -235,16 +236,27 @@ class HistDataFetcher:
             db.close()
 
 
-    def migrate_daily_data(self, target_date: date) -> tuple[int, int]:
-        """
-        Fetch + upsert EOD prices for the whole universe on target_date.
-        """
+    def migrate_daily_data(self, target_date: date) -> int:
+        """Fetch + upsert EOD prices for the whole universe on target_date."""
         db = SessionLocal()
-        logger.info(f"Fetching EOD prices for all stocks on {target_date}")
-        price_data = self.fetch_ohlcv(db, target_date)
-        self.upsert_chunk(db, price_data)    
-        db.commit()
-        logger.info(f"Daily price migration successful for {len(price_data)} symbols on {target_date}")
+        try:
+            logger.info(f"Fetching EOD prices for all stocks on {target_date}")
+            price_data = self.fetch_ohlcv(db, target_date) or []
+            if not price_data:
+                logger.info(f"No EOD price rows returned for {target_date}")
+                return 0
+
+            self.upsert_chunk(db, price_data)
+            db.commit()
+            logger.info(
+                f"Daily price migration successful for {len(price_data)} symbols on {target_date}"
+            )
+            return len(price_data)
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
 
     def run_and_fetch(self, start_date=None, end_date=None):

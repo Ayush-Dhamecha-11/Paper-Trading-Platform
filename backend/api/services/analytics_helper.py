@@ -40,7 +40,9 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Order, OrderType, Portfolio, PortfolioSnapshot, Position, PriceHistory, UniverseStock
+from api.services.market_data import MarketDataError, today_ist
+from api.services.portfolio_accounting import build_portfolio_state, get_position_quotes
+from db.models import Order, OrderStatus, OrderType, Portfolio, PortfolioSnapshot, Position, PriceHistory, UniverseStock
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +75,16 @@ def load_snapshots(db: Session, portfolio_id: int) -> pd.DataFrame:
     ).scalars().all()
 
     if not rows:
-        return pd.DataFrame(columns=["day", "portfolio_value", "cash_balance", "daily_return", "cumulative_return", "user_id"])
+        return pd.DataFrame(columns=["day", "portfolio_value", "account_equity", "cash_balance", "daily_return", "cumulative_return", "user_id"])
 
     df = pd.DataFrame(
         [
             {
                 "day": r.day,
+                # Portfolio value = holdings only. Analytics performance uses
+                # account_equity so cash movements do not disappear from the curve.
                 "portfolio_value": float(r.portfolio_value),
+                "account_equity": float(r.account_equity),
                 "cash_balance": float(r.cash_balance),
                 "daily_return": float(r.daily_return) if r.daily_return is not None else None,
                 "cumulative_return": float(r.cumulative_return) if r.cumulative_return is not None else None,
@@ -91,10 +96,9 @@ def load_snapshots(db: Session, portfolio_id: int) -> pd.DataFrame:
     df["day"] = pd.to_datetime(df["day"])
     df = df.set_index("day").sort_index()
 
-    # daily_return may be NULL for early rows if the snapshot step hasn't
-    # always populated it - recompute from portfolio_value as a fallback
-    # rather than leaving gaps that would silently break Sharpe/vol calcs.
-    pct_change = df["portfolio_value"].pct_change()
+    # daily_return may be NULL for early rows; use account equity as the return
+    # base because cash is part of the trading account value.
+    pct_change = df["account_equity"].pct_change()
     df["daily_return"] = df["daily_return"].fillna(pct_change)
     df.loc[df.index[0], "daily_return"] = 0.0 if pd.isna(df["daily_return"].iloc[0]) else df["daily_return"].iloc[0]
 
@@ -181,8 +185,11 @@ def build_performance_series(
     if ranged.empty:
         return []
 
-    base_value = ranged["portfolio_value"].iloc[0]
-    portfolio_rebased = ranged["portfolio_value"] / base_value * 100
+    # Performance is account performance, so free cash + marked positions are
+    # represented in the curve. Holdings-only portfolio value is intentionally
+    # kept separate for the portfolio summary card.
+    base_value = ranged["account_equity"].iloc[0]
+    portfolio_rebased = ranged["account_equity"] / base_value * 100
 
     bench_ranged = benchmark.reindex(ranged.index, method="ffill") if not benchmark.empty else None
     if bench_ranged is not None and not bench_ranged.empty and not pd.isna(bench_ranged.iloc[0]):
@@ -191,8 +198,8 @@ def build_performance_series(
     else:
         bench_rebased = None
 
-    pnl = ranged["portfolio_value"] - base_value
-    drawdown = compute_drawdown_series(ranged["portfolio_value"])
+    pnl = ranged["account_equity"] - base_value
+    drawdown = compute_drawdown_series(ranged["account_equity"])
     volatility = compute_rolling_volatility(ranged["daily_return"])
 
     label_fmt = "%d %b" if range_key in ("1W", "1M") else "%b"
@@ -235,63 +242,102 @@ def build_monthly_returns(snapshots: pd.DataFrame) -> list[dict]:
 # Trade matching (average cost basis) - realized P&L, win rate, etc.
 def match_trades_average_cost(orders: list[Order]) -> list[dict]:
     """
-    Turn a flat buy/sell Order log into a list of realized "trades" -
-    one record per SELL, valued against the running average cost basis
-    at the moment of that sell.
+    Match the order ledger using a signed position and average cost.
 
-    Per-symbol, processed in chronological order:
-        BUY  -> avg_cost = (avg_cost*qty + price*buy_qty) / (qty+buy_qty)
-        SELL -> pnl = (sell_price - avg_cost) * sell_qty
-                avg_cost is unchanged by a sell (remaining shares keep
-                the same cost basis) - matches standard average-cost
-                accounting, not FIFO lot-by-lot matching.
-
-    A SELL that exceeds current tracked quantity (shouldn't happen if
-    the trading engine enforces valid orders, but data can be messy) is
-    clipped to the available quantity rather than going negative, and
-    logged - never raises, since one bad row shouldn't break the whole
-    analytics page.
+    This handles long trades, short trades, partial covers, and position flips.
+    Every time an order reduces the existing signed position, a realized trade
+    record is emitted.
     """
     by_symbol: dict[str, list[Order]] = {}
-    for o in orders:
-        by_symbol.setdefault(o.symbol, []).append(o)
+    for order in orders:
+        if order.status not in (
+            OrderStatus.FILLED.value,
+            OrderStatus.FORCE_CLOSED.value,
+            OrderStatus.FILLED,
+            OrderStatus.FORCE_CLOSED,
+        ):
+            continue
+        by_symbol.setdefault(order.symbol, []).append(order)
 
-    trades = []
+    trades: list[dict] = []
+
     for symbol, symbol_orders in by_symbol.items():
-        symbol_orders.sort(key=lambda o: o.timestamp)
-        qty = 0.0
+        symbol_orders.sort(key=lambda order: order.timestamp)
+        qty = 0.0  # positive long, negative short
         avg_cost = 0.0
 
-        for o in symbol_orders:
-            o_qty = float(o.quantity)
-            o_price = float(o.price)
+        for order in symbol_orders:
+            order_qty = float(order.quantity)
+            order_price = float(order.price)
 
-            if o.order_type == OrderType.BUY.value or o.order_type == OrderType.BUY:
-                new_qty = qty + o_qty
-                avg_cost = (avg_cost * qty + o_price * o_qty) / new_qty if new_qty > 0 else 0.0
-                qty = new_qty
-            else:
-                if o_qty > qty:
-                    logger.warning(
-                        f"SELL exceeds tracked position for {symbol} "
-                        f"(sell={o_qty}, held={qty}) - clipping to {qty}"
-                    )
-                    o_qty = qty
+            is_buy = order.order_type in (OrderType.BUY.value, OrderType.BUY)
 
-                pnl = (o_price - avg_cost) * o_qty
-                trades.append(
-                    {
+            if is_buy:
+                if qty < 0:
+                    cover_qty = min(order_qty, -qty)
+                    pnl = (avg_cost - order_price) * cover_qty
+                    trades.append({
                         "symbol": symbol,
-                        "date": o.timestamp.date(),
-                        "quantity": o_qty,
-                        "exit_price": o_price,
+                        "date": order.timestamp.date(),
+                        "quantity": cover_qty,
+                        "exit_price": order_price,
                         "avg_cost_at_exit": avg_cost,
                         "pnl": pnl,
-                    }
-                )
-                qty -= o_qty
+                        "side": "short",
+                    })
 
-    trades.sort(key=lambda t: t["date"])
+                    qty += cover_qty
+                    order_qty -= cover_qty
+                    if abs(qty) < 1e-12:
+                        qty = 0.0
+
+                    if order_qty > 1e-12:
+                        # Excess BUY opens a fresh long.
+                        qty = order_qty
+                        avg_cost = order_price
+                elif qty > 0:
+                    new_qty = qty + order_qty
+                    avg_cost = (avg_cost * qty + order_price * order_qty) / new_qty
+                    qty = new_qty
+                else:
+                    qty = order_qty
+                    avg_cost = order_price
+
+            else:
+                if qty > 0:
+                    sell_qty = min(order_qty, qty)
+                    pnl = (order_price - avg_cost) * sell_qty
+                    trades.append({
+                        "symbol": symbol,
+                        "date": order.timestamp.date(),
+                        "quantity": sell_qty,
+                        "exit_price": order_price,
+                        "avg_cost_at_exit": avg_cost,
+                        "pnl": pnl,
+                        "side": "long",
+                    })
+
+                    qty -= sell_qty
+                    order_qty -= sell_qty
+                    if abs(qty) < 1e-12:
+                        qty = 0.0
+
+                    if order_qty > 1e-12:
+                        # Excess SELL opens a fresh short.
+                        qty = -order_qty
+                        avg_cost = order_price
+                elif qty < 0:
+                    short_qty = -qty
+                    new_short_qty = short_qty + order_qty
+                    avg_cost = (
+                        avg_cost * short_qty + order_price * order_qty
+                    ) / new_short_qty
+                    qty = -new_short_qty
+                else:
+                    qty = -order_qty
+                    avg_cost = order_price
+
+    trades.sort(key=lambda trade: (trade["date"], trade["symbol"]))
     return trades
 
 
@@ -370,7 +416,7 @@ def build_return_distribution(trades: list[dict]) -> list[dict]:
 
 
 # Current holdings -> allocation charts (sector/stock/pnl/risk)
-def load_open_positions_with_meta(db: Session, portfolio_id: int):
+def load_open_positions_with_meta(db: Session, portfolio_id):
     positions = db.execute(
         select(Position).where(Position.user_id == portfolio_id)
     ).scalars().all()
@@ -378,73 +424,86 @@ def load_open_positions_with_meta(db: Session, portfolio_id: int):
     if not positions:
         return [], {}, {}
 
-    symbols = [p.symbol for p in positions]
+    symbols = [position.symbol for position in positions]
     meta = {
-        s.symbol: s
-        for s in db.execute(select(UniverseStock).where(UniverseStock.symbol.in_(symbols))).scalars()
+        stock.symbol: stock
+        for stock in db.execute(
+            select(UniverseStock).where(UniverseStock.symbol.in_(symbols))
+        ).scalars()
     }
 
-    latest_date = db.execute(
-        select(PriceHistory.day).order_by(PriceHistory.day.desc()).limit(1)
-    ).scalar_one_or_none()
-    prices = {}
-    if latest_date is not None:
-        rows = db.execute(
-            select(PriceHistory.symbol, PriceHistory.close)
-            .where(PriceHistory.symbol.in_(symbols))
-            .where(PriceHistory.day == latest_date)
-        ).all()
-        prices = {sym: float(c) for sym, c in rows}
+    try:
+        quotes = get_position_quotes(db, symbols)
+    except MarketDataError as exc:
+        logger.warning("Falling back to stored price history for analytics: %s", exc)
+        quotes = {}
 
+    prices = {symbol: quote.current_price for symbol, quote in quotes.items()}
     return positions, meta, prices
 
 
 def build_allocation_charts(positions, meta, prices) -> dict:
-    """Returns sectorAllocation, stockAllocation, pnlByStock - all AllocationPoint[]."""
+    """Return allocation and current unrealized P&L data for open positions."""
     if not positions:
         return {"sectorAllocation": [], "stockAllocation": [], "pnlByStock": []}
 
-    sector_value: dict[str, float] = {}
-    stock_value: dict[str, float] = {}
+    sector_exposure: dict[str, float] = {}
+    stock_exposure: dict[str, float] = {}
     stock_pnl: dict[str, float] = {}
-    total_value = 0.0
+    total_exposure = 0.0
 
-    for pos in positions:
-        qty = float(pos.quantity)
-        avg_cost = float(pos.avg_entry_price)
-        current_price = prices.get(pos.symbol, avg_cost)
-        value = qty * current_price
-        pnl = (current_price - avg_cost) * qty
+    for position in positions:
+        qty = float(position.quantity)
+        avg_cost = float(position.avg_entry_price)
+        current_price = prices.get(position.symbol)
 
-        sector = (meta.get(pos.symbol).sector if meta.get(pos.symbol) else None) or "Other"
-        sector_value[sector] = sector_value.get(sector, 0.0) + value
-        stock_value[pos.symbol] = value
-        stock_pnl[pos.symbol] = pnl
-        total_value += value
+        if current_price is None:
+            # A missing market price must not be converted to entry price; it
+            # would make current P&L look artificially equal to zero.
+            logger.warning("Skipping %s in allocation: current price missing", position.symbol)
+            continue
+
+        if qty > 0:
+            exposure = qty * current_price
+            pnl = (current_price - avg_cost) * qty
+        else:
+            short_qty = -qty
+            exposure = short_qty * current_price
+            pnl = (avg_cost - current_price) * short_qty
+
+        sector = (meta.get(position.symbol).sector if meta.get(position.symbol) else None) or "Other"
+        sector_exposure[sector] = sector_exposure.get(sector, 0.0) + exposure
+        stock_exposure[position.symbol] = exposure
+        stock_pnl[position.symbol] = pnl
+        total_exposure += exposure
 
     sector_allocation = []
-    if total_value > 0:
-        for sector, value in sorted(sector_value.items(), key=lambda kv: -kv[1]):
-            sector_allocation.append(
-                {
-                    "label": sector,
-                    "value": round(value / total_value * 100, 2),
-                    "color": SECTOR_COLORS.get(sector, DEFAULT_SECTOR_COLOR),
-                }
-            )
-
     stock_allocation = []
     pnl_by_stock = []
-    if total_value > 0:
-        for i, (symbol, value) in enumerate(sorted(stock_value.items(), key=lambda kv: -kv[1])):
-            color = STOCK_PALETTE[i % len(STOCK_PALETTE)]
-            stock_allocation.append(
-                {"label": symbol, "value": round(value / total_value * 100, 2), "color": color}
-            )
-        for symbol, pnl in stock_pnl.items():
-            pnl_by_stock.append(
-                {"label": symbol, "value": round(pnl, 2), "color": "#20d89b" if pnl >= 0 else "#f56b6b"}
-            )
+
+    if total_exposure > 0:
+        for sector, exposure in sorted(sector_exposure.items(), key=lambda kv: -kv[1]):
+            sector_allocation.append({
+                "label": sector,
+                "value": round(exposure / total_exposure * 100, 2),
+                "color": SECTOR_COLORS.get(sector, DEFAULT_SECTOR_COLOR),
+            })
+
+        for i, (symbol, exposure) in enumerate(
+            sorted(stock_exposure.items(), key=lambda kv: -kv[1])
+        ):
+            stock_allocation.append({
+                "label": symbol,
+                "value": round(exposure / total_exposure * 100, 2),
+                "color": STOCK_PALETTE[i % len(STOCK_PALETTE)],
+            })
+
+    for symbol, pnl in stock_pnl.items():
+        pnl_by_stock.append({
+            "label": symbol,
+            "value": round(pnl, 2),
+            "color": "#20d89b" if pnl >= 0 else "#f56b6b",
+        })
 
     return {
         "sectorAllocation": sector_allocation,
@@ -462,7 +521,7 @@ def build_risk_by_stock(db: Session, positions, lookback_days: int = 90) -> list
         return []
 
     symbols = [p.symbol for p in positions]
-    start = date.today() - timedelta(days=lookback_days)
+    start = today_ist() - timedelta(days=lookback_days)
 
     rows = db.execute(
         select(PriceHistory.symbol, PriceHistory.day, PriceHistory.close)
@@ -485,7 +544,13 @@ def build_risk_by_stock(db: Session, positions, lookback_days: int = 90) -> list
         daily_ret = closes.pct_change().dropna()
         if daily_ret.empty:
             continue
-        total_return_pct = (closes.iloc[-1] / closes.iloc[0] - 1) * 100
+        underlying_return_pct = (closes.iloc[-1] / closes.iloc[0] - 1) * 100
+        position = next((p for p in positions if p.symbol == symbol), None)
+        total_return_pct = (
+            underlying_return_pct
+            if position is None or float(position.quantity) >= 0
+            else -underlying_return_pct
+        )
         vol_pct = daily_ret.std() * math.sqrt(252) * 100
         out.append(
             {
@@ -500,22 +565,20 @@ def build_risk_by_stock(db: Session, positions, lookback_days: int = 90) -> list
 
 # Summary cards
 def build_summary(
+    db: Session,
     portfolio: Portfolio,
     snapshots: pd.DataFrame,
     benchmark: pd.Series,
     positions,
-    prices,
 ) -> list[dict]:
-    market_value = sum(float(p.quantity) * prices.get(p.symbol, float(p.avg_entry_price)) for p in positions)
-    portfolio_value = float(portfolio.cash_balance) + market_value
-
-    total_return_pct = 0.0
-    if float(portfolio.initial_capital) > 0:
-        total_return_pct = (portfolio_value - float(portfolio.initial_capital)) / float(portfolio.initial_capital) * 100
-
-    today_pnl = 0.0
-    if len(snapshots) >= 2:
-        today_pnl = snapshots["portfolio_value"].iloc[-1] - snapshots["portfolio_value"].iloc[-2]
+    """Build analytics summary cards from the central portfolio accounting."""
+    state = build_portfolio_state(db, portfolio, positions=positions)
+    portfolio_value = float(state.portfolio_value)
+    total_return_pct = (
+        float(state.total_profit) / float(state.net_contributed_capital) * 100
+        if float(state.net_contributed_capital) > 0
+        else 0.0
+    )
 
     alpha_pct = 0.0
     if not snapshots.empty and not benchmark.empty:
@@ -523,21 +586,22 @@ def build_summary(
         if len(aligned_bench) >= 2:
             bench_return_pct = (aligned_bench.iloc[-1] / aligned_bench.iloc[0] - 1) * 100
             portfolio_return_pct = (
-                (snapshots["portfolio_value"].iloc[-1] / snapshots["portfolio_value"].iloc[0]) - 1
+                snapshots["account_equity"].iloc[-1] / snapshots["account_equity"].iloc[0] - 1
             ) * 100
             alpha_pct = portfolio_return_pct - bench_return_pct
 
     sharpe = compute_sharpe_ratio(snapshots["daily_return"]) if not snapshots.empty else 0.0
-    max_dd = compute_max_drawdown(snapshots["portfolio_value"]) if not snapshots.empty else 0.0
+    max_dd = compute_max_drawdown(snapshots["account_equity"]) if not snapshots.empty else 0.0
 
-    def tone(v: float) -> str:
-        return "good" if v >= 0 else "bad"
+    def tone(value: float) -> str:
+        return "good" if value >= 0 else "bad"
 
     return [
         {"label": "Portfolio Value", "value": f"₹{portfolio_value:,.0f}", "tone": "neutral"},
         {"label": "Total Return", "value": f"{total_return_pct:+.1f}%", "tone": tone(total_return_pct)},
-        {"label": "Today's P&L", "value": _format_inr(today_pnl, show_plus=True), "tone": tone(today_pnl)},
+        {"label": "Today's P&L", "value": _format_inr(float(state.today_pnl), show_plus=True), "tone": tone(float(state.today_pnl))},
         {"label": "Alpha vs NIFTY 50", "value": f"{alpha_pct:+.1f}%", "tone": tone(alpha_pct)},
         {"label": "Sharpe Ratio", "value": f"{sharpe:.2f}", "tone": tone(sharpe)},
         {"label": "Max Drawdown", "value": f"{max_dd:.1f}%", "tone": "bad" if max_dd < 0 else "neutral"},
     ]
+

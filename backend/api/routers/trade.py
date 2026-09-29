@@ -1,87 +1,166 @@
 """
-backend/api/routers/trade.py
-    POST /api/trade/execute        - single order  (executeTrade)
-    POST /api/trade/batch          - basket of orders (executeBatchTrade)
-    PATCH /api/profile/capital     - set cash_balance directly (TradeModal's "Edit Capital")
+Trade API routes.
 
-All the actual execution logic lives in api/services/trade_service.py -
-this file only validates the request shape, loads the portfolio, calls
-the service, and translates TradeError into an HTTP error response.
-
+The browser may still send a legacy `price` field, but execution ignores it.
+The backend obtains the execution price itself so clients cannot create a
+portfolio using stale or manipulated prices.
 """
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+
 from api.dependencies.auth import get_current_user
 from api.dependencies.portfolio import get_or_create_portfolio
-from api.services.trade_service import OrderRequest, TradeError, execute_batch
-from api.schemas.trade import TradePayload, BatchTradePayload, TradeResult, UpdateCapitalPayload
+from api.schemas.trade import BatchTradePayload, TradePayload, TradeResult, UpdateCapitalPayload
+from api.services.market_data import MarketDataError
+from api.services.trade_service import D, OrderRequest, TradeError, calculate_capital_delta, execute_batch
 from db.database import get_db
+from db.models import CapitalTransaction, Portfolio
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["trade"])
 
 
-# POST /api/trade/execute - single order
 @router.post("/trade/execute", response_model=TradeResult)
 def trade_execute(
     payload: TradePayload,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    
     portfolio = get_or_create_portfolio(db, user["id"])
 
     try:
-        request = OrderRequest(symbol=payload.ticker, action=payload.action, quantity=payload.quantity, price=payload.price)
-        result = execute_batch(db, portfolio, [request])
-
-    except TradeError as e:
+        request = OrderRequest(
+            symbol=payload.ticker,
+            action=payload.action,
+            quantity=payload.quantity,
+        )
+        execute_batch(db, portfolio, [request])
+    except MarketDataError as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TradeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return TradeResult(success=result.success, message=result.message)
+    return TradeResult(success=True, message="Trade executed successfully")
 
 
-
-# POST /api/trade/batch - basket of orders, all-or-nothing
 @router.post("/trade/batch", response_model=TradeResult)
 def trade_batch(
     payload: BatchTradePayload,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    
     portfolio = get_or_create_portfolio(db, user["id"])
 
     try:
         requests = [
-            OrderRequest(symbol=o.ticker, action=o.action, quantity=o.quantity, price=o.price)
-            for o in payload.orders
+            OrderRequest(
+                symbol=order.ticker,
+                action=order.action,
+                quantity=order.quantity,
+            )
+            for order in payload.orders
         ]
-        result = execute_batch(db, portfolio, requests)
-
-    except TradeError as e:
+        execute_batch(db, portfolio, requests)
+    except MarketDataError as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TradeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return TradeResult(success=result.success, message=result.message)
+    return TradeResult(success=True, message="Trades executed successfully")
 
 
-# PATCH /api/profile/capital - TradeModal's "Edit Capital" control
 @router.patch("/profile/capital")
 def update_capital(
     payload: UpdateCapitalPayload,
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
+    """Set the user's spendable cash/capital balance.
 
+    The payload is the TARGET cash balance, not a P&L reset.
+      * higher target -> deposit
+      * lower target -> withdrawal
+
+    Every change is recorded in CapitalTransaction so historical P&L and
+    daily returns can exclude external cash flows. Existing positions are
+    never changed by a capital update.
+    """
     portfolio = get_or_create_portfolio(db, user["id"])
-    portfolio.cash_balance = payload.capital
+
+    locked_portfolio = db.execute(
+        select(Portfolio)
+        .where(Portfolio.user_id == portfolio.user_id)
+        .with_for_update()
+    ).scalar_one()
+    portfolio = locked_portfolio
+
+    new_capital = D(payload.capital)
+    if not new_capital.is_finite() or new_capital < 0:
+        raise HTTPException(status_code=400, detail="Capital must be a finite non-negative amount.")
+
+    current_capital = D(portfolio.cash_balance)
+    try:
+        delta, transaction_type = calculate_capital_delta(
+            current_capital,
+            new_capital,
+        )
+    except TradeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if delta == 0:
+        return {
+            "message": "Capital unchanged",
+            "capital": float(new_capital),
+            "change": 0.0,
+            "transactionType": "none",
+        }
+
+    # The withdrawal is limited to free cash. Money committed to open long
+    # positions and short margin is not part of spendable capital.
+    if delta < 0 and abs(delta) > current_capital:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient free capital for withdrawal: available "
+                f"{current_capital:.2f}, requested {abs(delta):.2f}"
+            ),
+        )
+
+    portfolio.cash_balance = new_capital
+
+    db.add(
+        CapitalTransaction(
+            user_id=portfolio.user_id,
+            amount=delta,
+            transaction_type=transaction_type,
+            description=(
+                "Manual capital deposit"
+                if transaction_type == "deposit"
+                else "Manual capital withdrawal"
+            ),
+        )
+    )
+
     db.commit()
 
-    return {"message": "Capital updated", "capital": float(portfolio.cash_balance)}
+    message = {
+        "deposit": "Capital deposited successfully",
+        "withdrawal": "Capital withdrawn successfully",
+    }[transaction_type]
+
+    return {
+        "message": message,
+        "capital": float(new_capital),
+        "change": float(delta),
+        "transactionType": transaction_type,
+    }
+

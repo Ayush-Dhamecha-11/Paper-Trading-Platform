@@ -173,6 +173,61 @@ class Portfolio(Base):
         return f"<Portfolio user_id={self.user_id}>"
 
 
+# Capital Transactions
+class CapitalTransaction(Base):
+    """
+    Immutable ledger of external cash added to or removed from the paper account.
+
+    `amount` is signed:
+      +amount -> deposit
+      -amount -> withdrawal
+
+    This ledger is required to keep total P&L and historical returns correct when
+    a user changes their trading capital after the account has started trading.
+    """
+
+    __tablename__ = "capital_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+    )
+
+    amount: Mapped[float] = mapped_column(
+        Numeric,
+        nullable=False,
+    )
+
+    transaction_type: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<CapitalTransaction {self.user_id} "
+            f"{self.transaction_type} {self.amount}>"
+        )
+
+
 # User Preferences
 class UserPreference(Base):
     """
@@ -303,8 +358,10 @@ class Order(Base):
 # Portfolio Snapshots
 class PortfolioSnapshot(Base):
     """
-    Daily portfolio snapshot.
-    Primary key: (day, user_id)
+    Daily end-of-day snapshot.
+
+    `portfolio_value` is the value of the holdings only.
+    `account_equity` is the full account value used for returns/P&L.
     """
 
     __tablename__ = "portfolio_snapshots"
@@ -316,6 +373,11 @@ class PortfolioSnapshot(Base):
     )
 
     portfolio_value: Mapped[float] = mapped_column(
+        Numeric,
+        nullable=False,
+    )
+
+    account_equity: Mapped[float] = mapped_column(
         Numeric,
         nullable=False,
     )

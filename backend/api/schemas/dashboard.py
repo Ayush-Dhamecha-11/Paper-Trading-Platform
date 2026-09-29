@@ -32,7 +32,12 @@ class PerformancePointOut(BaseModel):
 
 
 class DashboardData(BaseModel):
+    # Value of currently open holdings; does not include free cash/capital.
     totalPortfolioValue: float
+    # Spendable cash balance available for new trades.
+    capitalBalance: float
+    # Complete marked account equity (cash + marked positions).
+    accountEquity: float
     investedCapital: float
     totalProfit: float
     todayPnL: float

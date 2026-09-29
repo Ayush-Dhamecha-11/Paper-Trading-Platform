@@ -31,6 +31,7 @@ from api.schemas.analytics import (
     MonthlyReturnOut
 )
 from api.services import analytics_helper as svc
+from api.services.market_data import today_ist
 from db.database import get_db
 from db.models import Order
 
@@ -56,7 +57,7 @@ def get_analytics(
         bench_start = snapshots.index.min().date()
         bench_end = snapshots.index.max().date()
     else:
-        bench_end = date.today()
+        bench_end = today_ist()
         bench_start = bench_end - timedelta(days=365)
     benchmark = svc.load_benchmark(db, bench_start, bench_end)
 
@@ -67,7 +68,7 @@ def get_analytics(
     ).scalars().all()
     trades = svc.match_trades_average_cost(orders)
 
-    as_of = date.today()
+    as_of = today_ist()
     performance_series = {
         range_key: svc.build_performance_series(snapshots, benchmark, range_key, as_of)
         for range_key in RANGE_KEYS
@@ -75,7 +76,7 @@ def get_analytics(
 
     allocation = svc.build_allocation_charts(positions, meta, prices)
     risk_by_stock = svc.build_risk_by_stock(db, positions)
-    summary = svc.build_summary(portfolio, snapshots, benchmark, positions, prices)
+    summary = svc.build_summary(db, portfolio, snapshots, benchmark, positions)
     trading_metrics = svc.build_trading_metrics(trades)
     return_distribution = svc.build_return_distribution(trades)
     monthly_returns = svc.build_monthly_returns(snapshots)
