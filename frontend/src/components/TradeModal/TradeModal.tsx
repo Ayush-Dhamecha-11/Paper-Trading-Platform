@@ -81,8 +81,52 @@ type Props = {
 
 // ─── Data helpers ────────────────────────────────────────────────────────────
 
+function getCachedCapital(): number | null {
+  const cachedCapital = getCachedData<number>(CAPITAL_CACHE_KEY);
+  if (typeof cachedCapital === "number") return cachedCapital;
+
+  const cachedSummary = getCachedData<{
+    totalPortfolioValue?: number;
+    capitalBalance?: number;
+    accountEquity?: number;
+    availableCapital?: number;
+    investedCapital?: number;
+  }>(DASHBOARD_SUMMARY_CACHE_KEY);
+  if (cachedSummary) {
+    if (typeof cachedSummary.capitalBalance === "number") return cachedSummary.capitalBalance;
+    if (typeof cachedSummary.availableCapital === "number") return cachedSummary.availableCapital;
+    if (typeof cachedSummary.totalPortfolioValue === "number") return cachedSummary.totalPortfolioValue;
+  }
+
+  return null;
+}
+
 async function fetchCapital(): Promise<number> {
-  // Always query /api/dashboard first when fetching capital for TradeModal to get the latest capitalBalance
+  const cached = getCachedCapital();
+  if (cached !== null) {
+    // Background revalidate without delaying the user
+    void authenticatedFetch(`${getBackendBaseUrl()}/api/dashboard`, {
+      credentials: "include",
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const data = (await res.json()) as {
+            totalPortfolioValue?: number;
+            capitalBalance?: number;
+            availableCapital?: number;
+          };
+          const val =
+            typeof data.capitalBalance === "number"
+              ? data.capitalBalance
+              : (data.availableCapital ?? data.totalPortfolioValue ?? cached);
+          setCachedData(CAPITAL_CACHE_KEY, val);
+          window.dispatchEvent(new CustomEvent("capital-synced", { detail: val }));
+        }
+      })
+      .catch(() => {});
+    return cached;
+  }
+
   try {
     const res = await authenticatedFetch(`${getBackendBaseUrl()}/api/dashboard`, {
       credentials: "include",
@@ -107,41 +151,25 @@ async function fetchCapital(): Promise<number> {
     // If network request fails, fall back to cached values
   }
 
-  const cachedCapital = getCachedData<number>(CAPITAL_CACHE_KEY);
-  if (typeof cachedCapital === "number") return cachedCapital;
-
-  const cachedSummary = getCachedData<{
-    totalPortfolioValue?: number;
-    capitalBalance?: number;
-    accountEquity?: number;
-    availableCapital?: number;
-    investedCapital?: number;
-  }>(DASHBOARD_SUMMARY_CACHE_KEY);
-  if (cachedSummary) {
-    if (typeof cachedSummary.capitalBalance === "number") return cachedSummary.capitalBalance;
-    if (typeof cachedSummary.availableCapital === "number") return cachedSummary.availableCapital;
-    return cachedSummary.totalPortfolioValue ?? 0;
-  }
-
   return 0;
 }
 
 async function fetchHoldings(): Promise<Holding[]> {
   const cached = getCachedData<Holding[]>(HOLDINGS_CACHE_KEY);
-  if (cached) return cached;
+  if (cached && Array.isArray(cached) && cached.length > 0) return cached;
 
   try {
     const res = await authenticatedFetch(`${getBackendBaseUrl()}/api/portfolio`, {
       credentials: "include",
     });
     logBackendResponse(res, "GET /api/portfolio (trade modal)");
-    if (!res.ok) return [];
+    if (!res.ok) return cached ?? [];
     const data = (await res.json()) as { holdings?: Holding[] };
     const holdings = data.holdings ?? (Array.isArray(data) ? (data as Holding[]) : []);
     setCachedData(HOLDINGS_CACHE_KEY, holdings);
     return holdings;
   } catch {
-    return [];
+    return cached ?? [];
   }
 }
 
@@ -169,10 +197,10 @@ export default function TradeModal({
   const [searchOpen, setSearchOpen] = useState(false);
 
   // ── Data & Capital ──
-  const [allStocks, setAllStocks] = useState<Stock[]>([]);
-  const [availableCapital, setAvailableCapital] = useState<number>(0);
-  const [holdings, setHoldings] = useState<Holding[]>([]);
-  const [capitalLoading, setCapitalLoading] = useState(true);
+  const [allStocks, setAllStocks] = useState<Stock[]>(() => getAllStocks());
+  const [availableCapital, setAvailableCapital] = useState<number>(() => getCachedCapital() ?? 0);
+  const [holdings, setHoldings] = useState<Holding[]>(() => getCachedData<Holding[]>(HOLDINGS_CACHE_KEY) ?? []);
+  const [capitalLoading, setCapitalLoading] = useState<boolean>(() => getCachedCapital() === null);
 
   // ── Capital management (Add / Remove) ──
   const [managingCapital, setManagingCapital] = useState(false);
@@ -197,6 +225,27 @@ export default function TradeModal({
       if (autoCloseTimerRef.current) {
         window.clearTimeout(autoCloseTimerRef.current);
       }
+    };
+  }, []);
+
+  // Listen for real-time capital sync events
+  useEffect(() => {
+    const handleCapitalUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<number>;
+      if (typeof customEvent.detail === "number") {
+        setAvailableCapital(customEvent.detail);
+      } else {
+        const freshCap = getCachedCapital();
+        if (freshCap !== null) {
+          setAvailableCapital(freshCap);
+        }
+      }
+    };
+    window.addEventListener("capital-synced", handleCapitalUpdate);
+    window.addEventListener("capital-updated", handleCapitalUpdate);
+    return () => {
+      window.removeEventListener("capital-synced", handleCapitalUpdate);
+      window.removeEventListener("capital-updated", handleCapitalUpdate);
     };
   }, []);
 
@@ -226,8 +275,22 @@ export default function TradeModal({
     // Load available stocks
     setAllStocks(getAllStocks());
 
-    // Load capital and holdings
-    setCapitalLoading(true);
+    // Instantly sync capital and holdings from cache if available so there is no loading delay
+    const initialCap = getCachedCapital();
+    const initialHold = getCachedData<Holding[]>(HOLDINGS_CACHE_KEY);
+
+    if (initialCap !== null) {
+      setAvailableCapital(initialCap);
+      setCapitalLoading(false);
+    } else {
+      setCapitalLoading(true);
+    }
+
+    if (initialHold && Array.isArray(initialHold)) {
+      setHoldings(initialHold);
+    }
+
+    // Refresh capital and holdings in background or fulfill if not cached
     void Promise.all([fetchCapital(), fetchHoldings()]).then(([cap, hold]) => {
       setAvailableCapital(cap);
       setHoldings(hold);

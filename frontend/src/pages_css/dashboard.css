@@ -100,11 +100,33 @@
 }
 
 .profit-card {
-  background: linear-gradient(135deg, rgba(33, 217, 163, 0.2), var(--dashboard-panel));
+  background: linear-gradient(135deg, rgba(33, 217, 163, 0.16), var(--dashboard-panel));
+  border-color: rgba(33, 217, 163, 0.28);
 }
 
-.profit-card strong {
+.profit-card strong,
+.text-profit {
   color: var(--dashboard-success);
+}
+
+.loss-card {
+  background: linear-gradient(135deg, rgba(255, 94, 109, 0.16), var(--dashboard-panel));
+  border-color: rgba(255, 94, 109, 0.28);
+}
+
+.loss-card strong,
+.text-loss {
+  color: var(--dashboard-danger);
+}
+
+[data-theme="light"] .profit-card {
+  background: linear-gradient(135deg, rgba(21, 163, 111, 0.1), var(--dashboard-panel));
+  border-color: rgba(21, 163, 111, 0.25);
+}
+
+[data-theme="light"] .loss-card {
+  background: linear-gradient(135deg, rgba(232, 87, 103, 0.1), var(--dashboard-panel));
+  border-color: rgba(232, 87, 103, 0.25);
 }
 
 .dashboard-grid {

@@ -106,5 +106,17 @@ export function warmDashboardData() {
       });
     });
 
-  return Promise.allSettled([stocksRequest, summaryRequest, profileRequest]);
+  const holdingsRequest = authenticatedFetch(`${backendBaseUrl}/api/portfolio`, {
+    credentials: "include",
+  })
+    .then(async (response) => {
+      logBackendResponse(response, "GET /api/portfolio (prefetch)");
+      if (!response.ok) return;
+      const data = (await response.json()) as { holdings?: unknown[] } | unknown[];
+      const list = Array.isArray(data) ? data : (data.holdings ?? []);
+      setCachedData(HOLDINGS_CACHE_KEY, list);
+    })
+    .catch(() => {});
+
+  return Promise.allSettled([stocksRequest, summaryRequest, profileRequest, holdingsRequest]);
 }

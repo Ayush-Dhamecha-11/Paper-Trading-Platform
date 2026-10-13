@@ -40,13 +40,17 @@ const sectorAllocation = [
 ];
 */
 
-const holdings = [
-  // { ticker: "AAPL", name: "Apple Inc.", price: 214.3, quantity: 120, profit: 3510.5 },
-  // { ticker: "MSFT", name: "Microsoft", price: 418.75, quantity: 80, profit: 4820.2 },
-  // { ticker: "NVDA", name: "NVIDIA", price: 128.9, quantity: 200, profit: 6125.4 },
-  // { ticker: "AMZN", name: "Amazon", price: 185.2, quantity: 140, profit: 2680.7 },
-  // { ticker: "TSLA", name: "Tesla", price: 211.5, quantity: 90, profit: -1180.9 },
-];
+export type DashboardHolding = {
+  ticker: string;
+  name?: string;
+  quantity: number;
+  price?: number;
+  currentPrice?: number;
+  profit?: number;
+  profitLoss?: number;
+  averagePrice?: number;
+  previousClose?: number;
+};
 
 const API_BASE_URL =
   import.meta.env.VITE_BACKEND_URL ||
@@ -65,6 +69,27 @@ type PortfolioSummary = {
 
 async function fetchStocks(): Promise<Stock[]> {
   return fetchDashboardStocks();
+}
+
+async function fetchHoldings(): Promise<DashboardHolding[]> {
+  try {
+    const response = await authenticatedFetch(`${API_BASE_URL}/api/portfolio`, {
+      credentials: "include",
+    });
+    logBackendResponse(response, "GET /api/portfolio (dashboard holdings)");
+
+    if (!response.ok) {
+      return getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY) ?? [];
+    }
+
+    const data = (await response.json()) as { holdings?: DashboardHolding[] } | DashboardHolding[];
+    const list = Array.isArray(data) ? data : (data.holdings ?? []);
+    setCachedData(HOLDINGS_CACHE_KEY, list);
+    return list;
+  } catch (error) {
+    console.error("Unable to load holdings:", error);
+    return getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY) ?? [];
+  }
 }
 
 async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
@@ -156,7 +181,8 @@ export function DashboardPerformanceCharts({
 }
 */
 
-export function DashboardHoldingsTable() {
+export function DashboardHoldingsTable({ holdings: tableHoldings }: { holdings?: DashboardHolding[] } = {}) {
+  const displayHoldings = tableHoldings ?? getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY) ?? [];
   return (
     <div className="panel holdings-panel">
       <div className="panel-header">
@@ -178,14 +204,14 @@ export function DashboardHoldingsTable() {
             </tr>
           </thead>
           <tbody>
-            {holdings.map((stock) => (
+            {displayHoldings.map((stock) => (
               <tr key={stock.ticker}>
                 <td>{stock.ticker}</td>
-                <td>{stock.name}</td>
-                <td>{formatCurrency(stock.price)}</td>
+                <td>{stock.name ?? stock.ticker}</td>
+                <td>{formatCurrency(stock.currentPrice ?? stock.price ?? 0)}</td>
                 <td>{stock.quantity}</td>
-                <td className={stock.profit >= 0 ? "profit-value" : "loss-value"}>
-                  {formatCurrency(stock.profit)}
+                <td className={(stock.profit ?? stock.profitLoss ?? 0) >= 0 ? "profit-value" : "loss-value"}>
+                  {formatCurrency(stock.profit ?? stock.profitLoss ?? 0)}
                 </td>
               </tr>
             ))}
@@ -229,6 +255,9 @@ function DashboardPage() {
   const [stocks, setStocks] = useState<Stock[]>(cachedStocks ?? []);
   const [stocksLoading, setStocksLoading] = useState(!cachedStocks);
   const [stocksFailed, setStocksFailed] = useState(false);
+
+  const cachedHoldings = getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY);
+  const [holdings, setHoldings] = useState<DashboardHolding[]>(cachedHoldings ?? []);
 
   const cachedSummary = getCachedData<PortfolioSummary>(DASHBOARD_SUMMARY_CACHE_KEY);
   const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary>(
@@ -278,6 +307,17 @@ function DashboardPage() {
         if (isMounted) {
           setStocksLoading(false);
         }
+      });
+
+    const refreshHoldings = () => fetchHoldings()
+      .then((backendHoldings) => {
+        if (!isMounted) {
+          return;
+        }
+        setHoldings(backendHoldings);
+      })
+      .catch((error) => {
+        console.error("Unable to load holdings:", error);
       });
 
     const refreshPortfolioSummary = () => fetchPortfolioSummary()
@@ -345,6 +385,7 @@ function DashboardPage() {
       });
 
     void refreshStocks();
+    void refreshHoldings();
     void refreshPortfolioSummary();
     void refreshUserInfo();
 
@@ -352,10 +393,10 @@ function DashboardPage() {
       sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
       sessionStorage.removeItem(DASHBOARD_STOCKS_CACHE_KEY);
       sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
-      sessionStorage.removeItem(CAPITAL_CACHE_KEY);
       sessionStorage.removeItem("analytics_data");
       setSummaryLoading(true);
       void refreshStocks();
+      void refreshHoldings();
       void refreshPortfolioSummary();
       void refreshUserInfo();
     };
@@ -365,6 +406,7 @@ function DashboardPage() {
 
     const refreshTimer = window.setInterval(() => {
       void refreshStocks();
+      void refreshHoldings();
       void refreshPortfolioSummary();
       void refreshUserInfo();
     }, 60_000);
@@ -455,16 +497,34 @@ function DashboardPage() {
         </section>
 
         <section className="dashboard-summary-grid">
-          <div className="summary-card profit-card">
+          <div
+            className={`summary-card ${
+              portfolioSummary.todayPnL > 0
+                ? "profit-card"
+                : portfolioSummary.todayPnL < 0
+                ? "loss-card"
+                : ""
+            }`}
+          >
             <span>Today&apos;s Profit/Loss</span>
-            <strong>{summaryLoading ? "Loading..." : formatCurrency(portfolioSummary.todayPnL)}</strong>
+            <strong
+              className={
+                portfolioSummary.todayPnL > 0
+                  ? "text-profit"
+                  : portfolioSummary.todayPnL < 0
+                  ? "text-loss"
+                  : ""
+              }
+            >
+              {summaryLoading ? "Loading..." : formatCurrency(portfolioSummary.todayPnL)}
+            </strong>
             <small>{summaryLoading ? "Fetching latest data" : dailyChangeLabel}</small>
           </div>
 
           <div className="summary-card">
             <span>Portfolio Value</span>
             <strong>{summaryLoading ? "Loading..." : formatCurrency(portfolioSummary.totalPortfolioValue)}</strong>
-            <small>{summaryLoading ? "Fetching latest data" : `Across ${holdings.length} holdings`}</small>
+            <small>{summaryLoading ? "Fetching latest data" : `Across ${holdings.length} ${holdings.length === 1 ? "holding" : "holdings"}`}</small>
           </div>
 
           <div className="summary-card">
@@ -473,9 +533,27 @@ function DashboardPage() {
             <small>{summaryLoading ? "Fetching latest data" : "Based on current positions"}</small>
           </div>
 
-          <div className="summary-card">
+          <div
+            className={`summary-card ${
+              portfolioSummary.totalProfit > 0
+                ? "profit-card"
+                : portfolioSummary.totalProfit < 0
+                ? "loss-card"
+                : ""
+            }`}
+          >
             <span>Total P/L</span>
-            <strong>{summaryLoading ? "Loading..." : formatCurrency(portfolioSummary.totalProfit)}</strong>
+            <strong
+              className={
+                portfolioSummary.totalProfit > 0
+                  ? "text-profit"
+                  : portfolioSummary.totalProfit < 0
+                  ? "text-loss"
+                  : ""
+              }
+            >
+              {summaryLoading ? "Loading..." : formatCurrency(portfolioSummary.totalProfit)}
+            </strong>
             <small>{summaryLoading ? "Fetching latest data" : "Net realized + unrealized"}</small>
           </div>
         </section>

@@ -15,6 +15,7 @@ import {
   HOLDINGS_CACHE_KEY,
   CAPITAL_CACHE_KEY,
   DASHBOARD_SUMMARY_CACHE_KEY,
+  setCachedData,
 } from "../utils/dataCache";
 import "../pages_css/portfolio.css";
 
@@ -116,6 +117,9 @@ function PortfolioPage() {
         } else {
           setData(portfolio);
           setStatus("ready");
+          if (Array.isArray(portfolio.holdings)) {
+            setCachedData(HOLDINGS_CACHE_KEY, portfolio.holdings);
+          }
         }
       })
       .catch(() => {

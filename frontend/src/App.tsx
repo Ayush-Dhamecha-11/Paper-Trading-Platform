@@ -43,7 +43,6 @@ function GlobalTradePanel() {
       sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
       sessionStorage.removeItem(DASHBOARD_STOCKS_CACHE_KEY);
       sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
-      sessionStorage.removeItem(CAPITAL_CACHE_KEY);
       sessionStorage.removeItem("analytics_data");
     };
     window.addEventListener("trade-executed", handleDataBust);
