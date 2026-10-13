@@ -86,10 +86,10 @@ def load_stock_meta(db: Session, symbols: list[str]) -> dict[str, UniverseStock]
 
 
 def build_summary(portfolio, state: PortfolioState) -> PortfolioSummaryOut:
-    contributed_capital = float(state.net_contributed_capital)
+    cost_base = float(state.invested_capital) if state.invested_capital > 0 else float(state.net_contributed_capital)
     total_return_pct = (
-        float(state.total_profit) / contributed_capital * 100
-        if contributed_capital > 0
+        float(state.total_profit) / cost_base * 100
+        if cost_base > 0
         else 0.0
     )
 

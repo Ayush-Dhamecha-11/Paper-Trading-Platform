@@ -35,8 +35,8 @@ from db.models import Order, OrderStatus, OrderType, Portfolio, Position, PriceH
 
 logger = logging.getLogger(__name__)
 
-INITIAL_MARGIN_RATE = Decimal("0.20")
-MAINTENANCE_MARGIN_RATE = Decimal("0.25")
+INITIAL_MARGIN_RATE = Decimal("0.30")
+MAINTENANCE_MARGIN_RATE = Decimal("0.20")
 QUANTITY_EPSILON = Decimal("0.000001")
 ZERO = Decimal("0")
 
@@ -502,7 +502,10 @@ def mark_to_market_all_shorts(db: Session, as_of: Optional[date] = None) -> int:
             exposure = qty_short * price
             required_margin = exposure * MAINTENANCE_MARGIN_RATE
 
-            if D(pos.margin_locked) >= required_margin:
+            # Position equity is locked margin plus unrealized short P&L
+            position_equity = D(pos.margin_locked) + (D(pos.avg_entry_price) - price) * qty_short
+
+            if position_equity >= required_margin:
                 continue
 
             pnl = (D(pos.avg_entry_price) - price) * qty_short

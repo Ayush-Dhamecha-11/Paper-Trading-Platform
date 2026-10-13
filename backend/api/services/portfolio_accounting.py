@@ -187,8 +187,23 @@ def _position_mark(pos: Position, quote: MarketQuote) -> MarkedPosition:
     qty = D(pos.quantity)
     avg = D(pos.avg_entry_price)
     current = D(quote.current_price)
-    previous = D(quote.previous_close if quote.previous_close is not None else quote.current_price)
     margin = D(pos.margin_locked)
+
+    is_opened_today = False
+    if getattr(pos, "opened_at", None) is not None:
+        try:
+            opened_date = _created_at_ist(pos.opened_at).date()
+            if opened_date == today_ist():
+                is_opened_today = True
+        except Exception:
+            pass
+
+    if is_opened_today:
+        previous = avg
+    elif quote.previous_close is not None:
+        previous = D(quote.previous_close)
+    else:
+        previous = avg
 
     if qty > ZERO:
         market_value = qty * current
@@ -507,24 +522,28 @@ def build_portfolio_state(
     )
 
     net_contributed_capital = _net_contributed_capital(db, portfolio)
-    total_profit = account_equity - net_contributed_capital
 
+    # Calculate realized P&L from closed trades
+    from api.services.analytics_helper import match_trades_average_cost
+    orders = db.execute(
+        select(Order)
+        .where(Order.user_id == portfolio.user_id)
+        .order_by(Order.timestamp)
+    ).scalars().all()
+    closed_trades = match_trades_average_cost(orders)
+    realized_pnl = sum((D(str(t["pnl"])) for t in closed_trades), ZERO)
+
+    # Total P/L: Net realized + unrealized trading P&L
+    total_profit = realized_pnl + unrealized_pnl
+
+    # Today's P/L: open positions' day P&L + any trades closed today
     current_day = today_ist()
-    previous_close_equity = calculate_previous_close_equity(
-        db,
-        portfolio,
-        current_day,
+    today_realized_pnl = sum(
+        (D(str(t["pnl"])) for t in closed_trades if t.get("date") == current_day),
+        ZERO,
     )
-    today_capital_flow = _net_capital_flow_for_day(
-        db,
-        portfolio.user_id,
-        current_day,
-    )
-    if previous_close_equity is not None:
-        # Deposits/withdrawals are not trading P&L.
-        today_pnl = account_equity - previous_close_equity - today_capital_flow
-    else:
-        today_pnl = ZERO
+    open_positions_day_pnl = sum((m.day_pnl for m in marked), ZERO)
+    today_pnl = open_positions_day_pnl + today_realized_pnl
 
     return PortfolioState(
         cash_balance=cash,

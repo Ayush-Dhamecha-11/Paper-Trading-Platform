@@ -574,9 +574,10 @@ def build_summary(
     """Build analytics summary cards from the central portfolio accounting."""
     state = build_portfolio_state(db, portfolio, positions=positions)
     portfolio_value = float(state.portfolio_value)
+    cost_base = float(state.invested_capital) if state.invested_capital > 0 else float(state.net_contributed_capital)
     total_return_pct = (
-        float(state.total_profit) / float(state.net_contributed_capital) * 100
-        if float(state.net_contributed_capital) > 0
+        float(state.total_profit) / cost_base * 100
+        if cost_base > 0
         else 0.0
     )
 
