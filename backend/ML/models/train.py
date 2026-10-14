@@ -27,7 +27,7 @@ import logging
 import math
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -37,18 +37,19 @@ import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 
-# 1. Go 3 levels up to find the great-grandparent folder
-great_grandparent = Path.cwd().parents[1]
+# Path setup: ensure sibling 'data' and parent 'ML' are on sys.path
+current_file_dir = Path(__file__).resolve().parent
+ml_dir = current_file_dir.parent
+data_dir = ml_dir.parent / "data"
 
-# 2. Move sideways into the sibling folder
-sibling_dir = great_grandparent / "data"
-#print(sibling_dir)
-
-# 3. Add the sibling folder path as a string to sys.path
-sys.path.append(str(sibling_dir))
+if str(data_dir) not in sys.path:
+    sys.path.append(str(data_dir))
+if str(ml_dir) not in sys.path:
+    sys.path.append(str(ml_dir))
 
 from data_loader import DataLoader
 from attention_factor_model import AttentionFactorModel
+from hf_checkpoint_manager import upload_checkpoint, download_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -358,11 +359,11 @@ class RollingTrainer:
             scheduler.step(val_loss)
             current_lr = optimizer.param_groups[0]["lr"]
 
-            # Save best checkpoint
+            # Save and upload best checkpoint immediately to Hugging Face
             if val_loss < best_val_loss - self.cfg.min_delta:
                 best_val_loss = val_loss
                 best_epoch = epoch
-                self.save_checkpoints(model, window_num)
+                self.save_checkpoints(model, window_num, epoch, val_loss)
 
             # Logging every epochs
             logger.info(
@@ -498,16 +499,42 @@ class RollingTrainer:
         return omega_F
     
 
-    def save_checkpoints(self, model: AttentionFactorModel, window_num: int) -> None:
+    def save_checkpoints(
+        self,
+        model_or_state: Union[AttentionFactorModel, dict],
+        window_num: int,
+        epoch: Optional[int] = None,
+        val_loss: Optional[float] = None,
+    ) -> None:
         """
-        Save model weights for the window.
-
-        We save only model.state_dict() - the parameter tensors 
-        The checkpoint is named by window number so each rolling window
-        has its own independent best-model file
+        Upload best model weights for the window directly to Hugging Face Model Hub.
+        Instead of accumulating increasing numbers of local files on disk,
+        it pushes directly to the cloud Hugging Face repository.
         """
-        path_f = self.save_dir1 / f"K{self.cfg.K}_checkpoint_window_{window_num:02d}.pt" 
-        torch.save(model.state_dict(), path_f)
+        filename = f"K{self.cfg.K}_checkpoint_window_{window_num:02d}.pt"
+        commit_msg = (
+            f"Best checkpoint window {window_num:02d} (K={self.cfg.K}, epoch={epoch}, val_loss={val_loss:.4f})"
+            if val_loss is not None
+            else f"Checkpoint window {window_num:02d} (K={self.cfg.K})"
+        )
+        try:
+            upload_checkpoint(
+                model_or_state_dict=model_or_state,
+                filename=filename,
+                commit_message=commit_msg,
+            )
+            logger.info(f"  --> Checkpoint uploaded directly to Hugging Face: {filename}")
+        except Exception as exc:
+            logger.warning(
+                f"  --> HF direct upload skipped/failed ({exc}). Saving locally as fallback."
+            )
+            path_f = self.save_dir1 / filename
+            state_dict = (
+                model_or_state.state_dict()
+                if isinstance(model_or_state, nn.Module)
+                else model_or_state
+            )
+            torch.save(state_dict, path_f)
 
 
 if __name__ == "__main__":

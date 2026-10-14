@@ -62,6 +62,7 @@ class OrderRequest:
     # Kept for backward compatibility with older callers. This value is not
     # used by execute_batch for API execution.
     price: float | Decimal | None = None
+    predicted: bool = False
 
     def __post_init__(self):
         self.symbol = self.symbol.strip().upper()
@@ -81,6 +82,7 @@ class OrderResult:
     quantity: float
     price: float
     status: str = "filled"
+    predicted: bool = False
 
 
 @dataclass
@@ -373,6 +375,7 @@ def execute_batch(
                 action=req.action,
                 quantity=float(req.quantity),
                 price=float(price),
+                predicted=req.predicted,
             )
         )
 
@@ -411,6 +414,7 @@ def execute_batch(
                 price=D(result.price),
                 order_type=OrderType.BUY.value if result.action == "buy" else OrderType.SELL.value,
                 status=OrderStatus.FILLED.value,
+                predicted=result.predicted,
             )
         )
 

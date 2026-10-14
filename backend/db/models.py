@@ -345,6 +345,13 @@ class Order(Base):
         nullable=False,
     )
 
+    predicted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
     def __repr__(self) -> str:
         return (
             f"<Order "

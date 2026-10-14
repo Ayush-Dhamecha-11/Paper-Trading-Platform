@@ -8,10 +8,12 @@ class TradePayload(BaseModel):
     # Legacy frontend field. The backend intentionally ignores it for
     # execution and obtains the market price server-side.
     price: float | None = None
+    predicted: bool = False
 
 
 class BatchTradePayload(BaseModel):
     orders: list[TradePayload]
+    predicted: bool | None = None
 
 
 class TradeResult(BaseModel):

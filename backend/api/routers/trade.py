@@ -38,6 +38,7 @@ def trade_execute(
             symbol=payload.ticker,
             action=payload.action,
             quantity=payload.quantity,
+            predicted=payload.predicted,
         )
         execute_batch(db, portfolio, [request])
     except MarketDataError as exc:
@@ -64,6 +65,7 @@ def trade_batch(
                 symbol=order.ticker,
                 action=order.action,
                 quantity=order.quantity,
+                predicted=payload.predicted if payload.predicted is not None else order.predicted,
             )
             for order in payload.orders
         ]
