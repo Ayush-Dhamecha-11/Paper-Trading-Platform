@@ -205,8 +205,9 @@ export default function AuthPage({
       }
 
       if (isLogin) {
+        const warmPromise = warmDashboardData();
+        await Promise.race([warmPromise, new Promise((resolve) => setTimeout(resolve, 400))]);
         markLoggedIn();
-        void warmDashboardData();
       }
 
       console.log(isLogin ? "Login:" : "Sign up:", response);

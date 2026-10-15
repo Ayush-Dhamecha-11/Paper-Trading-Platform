@@ -9,6 +9,7 @@ import {
   DASHBOARD_STOCKS_CACHE_KEY,
   DASHBOARD_SUMMARY_CACHE_KEY,
   CAPITAL_CACHE_KEY,
+  HOLDINGS_CACHE_KEY,
   getCachedData,
   setCachedData,
 } from "./dataCache";
@@ -118,5 +119,12 @@ export function warmDashboardData() {
     })
     .catch(() => {});
 
-  return Promise.allSettled([stocksRequest, summaryRequest, profileRequest, holdingsRequest]);
+  return Promise.allSettled([stocksRequest, summaryRequest, profileRequest, holdingsRequest]).then(
+    (results) => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("dashboard-data-warmed"));
+      }
+      return results;
+    }
+  );
 }

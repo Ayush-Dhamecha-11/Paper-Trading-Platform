@@ -2,6 +2,7 @@ import type { Stock } from "../data/stocksData";
 import { STOCK_UNIVERSE } from "../data/stocksData";
 import { authenticatedFetch, getBackendBaseUrl, logBackendResponse } from "./authUtils";
 import { DASHBOARD_STOCKS_CACHE_KEY, getCachedData } from "./dataCache";
+import { isMarketClosed } from "./marketUtils";
 
 export type TradeAction = "buy" | "sell";
 
@@ -10,6 +11,7 @@ export type TradePayload = {
   action: TradeAction;
   quantity: number;
   price: number; // current market price at the time of order
+  predicted?: boolean;
 };
 
 export type TradeResult = {
@@ -108,9 +110,12 @@ export type TradeSuggestion = {
   price: number;
   status: "pending" | "executed";
   executedAt?: string;
+  is_executed?: boolean;
+  executed?: boolean;
+  predicted?: boolean;
 };
 
-// Fallback dummy suggestions blueprint (quantity > 0, no reasons)
+// Fallback dummy suggestions blueprint (quantity > 0, not executed)
 const DEFAULT_SUGGESTION_CONFIGS: Omit<TradeSuggestion, "price">[] = [
   {
     id: "sug_1",
@@ -119,6 +124,8 @@ const DEFAULT_SUGGESTION_CONFIGS: Omit<TradeSuggestion, "price">[] = [
     action: "buy",
     quantity: 2,
     status: "pending",
+    is_executed: false,
+    executed: false,
   },
   {
     id: "sug_2",
@@ -127,6 +134,8 @@ const DEFAULT_SUGGESTION_CONFIGS: Omit<TradeSuggestion, "price">[] = [
     action: "sell",
     quantity: 15,
     status: "pending",
+    is_executed: false,
+    executed: false,
   },
   {
     id: "sug_3",
@@ -135,6 +144,8 @@ const DEFAULT_SUGGESTION_CONFIGS: Omit<TradeSuggestion, "price">[] = [
     action: "buy",
     quantity: 3,
     status: "pending",
+    is_executed: false,
+    executed: false,
   },
   {
     id: "sug_4",
@@ -143,6 +154,8 @@ const DEFAULT_SUGGESTION_CONFIGS: Omit<TradeSuggestion, "price">[] = [
     action: "sell",
     quantity: 5,
     status: "pending",
+    is_executed: false,
+    executed: false,
   },
 ];
 
@@ -166,7 +179,19 @@ export async function fetchDailySuggestions(availableStocks?: Stock[]): Promise<
         : data.suggestions ?? [];
 
       // Filter out stocks with 0 buy or 0 sell quantity
-      return rawList.filter((item) => typeof item.quantity === "number" && item.quantity > 0);
+      const valid = rawList.filter((item) => typeof item.quantity === "number" && item.quantity > 0);
+
+      // =========================================================================
+      // [PRODUCTION SWITCH] TO USE STRICT REAL BACKEND DATA (EVEN IF EMPTY []):
+      // Uncomment the single line below. If uncommented, an empty array [] from backend
+      // will NOT show dummy suggestions.
+      // =========================================================================
+      // return valid;
+
+      // Currently: if backend sends suggestions, use them; if empty array [], show dummy suggestions:
+      if (valid.length > 0) {
+        return valid;
+      }
     }
   } catch {
     // If backend endpoint is not ready or network fails, fallback to dummy suggestions
@@ -188,10 +213,53 @@ export async function fetchDailySuggestions(availableStocks?: Stock[]): Promise<
 
     return {
       ...item,
+      status: "pending" as const,
+      is_executed: false,
+      executed: false,
       name: liveStock?.name ?? fallbackStock?.name ?? item.name,
       price: liveStock?.price ?? fallbackStock?.price ?? 1000,
     };
   }).filter((s) => s.quantity > 0 && s.price > 0);
+}
+
+export const SUGGESTIONS_EXECUTED_KEY = "strategy_suggestions_executed";
+
+export function getTodayDateString(): string {
+  try {
+    return new Date().toISOString().slice(0, 10);
+  } catch {
+    return "today";
+  }
+}
+
+export function areSuggestionsExecutedToday(): boolean {
+  try {
+    const today = getTodayDateString();
+    const storedDate =
+      localStorage.getItem(`${SUGGESTIONS_EXECUTED_KEY}_date`) ||
+      sessionStorage.getItem(`${SUGGESTIONS_EXECUTED_KEY}_date`);
+    if (storedDate === today) {
+      return true;
+    }
+    const storedFlag =
+      localStorage.getItem(SUGGESTIONS_EXECUTED_KEY) ||
+      sessionStorage.getItem(SUGGESTIONS_EXECUTED_KEY);
+    return storedFlag === "true" || storedFlag === today;
+  } catch {
+    return false;
+  }
+}
+
+export function markSuggestionsExecuted(): void {
+  try {
+    const today = getTodayDateString();
+    localStorage.setItem(`${SUGGESTIONS_EXECUTED_KEY}_date`, today);
+    localStorage.setItem(SUGGESTIONS_EXECUTED_KEY, "true");
+    sessionStorage.setItem(`${SUGGESTIONS_EXECUTED_KEY}_date`, today);
+    sessionStorage.setItem(SUGGESTIONS_EXECUTED_KEY, "true");
+  } catch {
+    // Ignore storage errors
+  }
 }
 
 /**
@@ -199,12 +267,18 @@ export async function fetchDailySuggestions(availableStocks?: Stock[]): Promise<
  * Bypasses frontend guards because backend already validated this plan.
  */
 export async function executeSuggestionsAsIs(suggestions: TradeSuggestion[]): Promise<TradeResult> {
+  if (isMarketClosed()) {
+    throw new Error("Cannot execute suggestions: The stock market is currently closed.");
+  }
+  const alreadyDone = areSuggestionsExecutedToday();
   const orders: TradePayload[] = suggestions.map((s) => ({
     ticker: s.ticker,
     action: s.action,
     quantity: s.quantity,
     price: s.price,
+    ...(!alreadyDone ? { predicted: true } : {}),
   }));
   return executeBatchTrade(orders);
 }
+
 

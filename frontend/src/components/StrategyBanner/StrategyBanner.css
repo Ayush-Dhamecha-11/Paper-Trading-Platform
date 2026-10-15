@@ -21,6 +21,10 @@
   --sb-sell-color: #ff5e6d;
   --sb-sell-border: rgba(255, 94, 109, 0.3);
 
+  --sb-short-bg: rgba(245, 158, 11, 0.12);
+  --sb-short-color: #f59e0b;
+  --sb-short-border: rgba(245, 158, 11, 0.35);
+
   --sb-table-head-bg: #0d1a2d;
   --sb-table-row-hover: rgba(255, 255, 255, 0.035);
   --sb-table-border: rgba(148, 163, 184, 0.1);
@@ -50,6 +54,10 @@
   --sb-sell-bg: rgba(216, 72, 88, 0.08);
   --sb-sell-color: #d84858;
   --sb-sell-border: rgba(216, 72, 88, 0.25);
+
+  --sb-short-bg: rgba(217, 119, 6, 0.08);
+  --sb-short-color: #d97706;
+  --sb-short-border: rgba(217, 119, 6, 0.25);
 
   --sb-table-head-bg: #f4f8fb;
   --sb-table-row-hover: rgba(7, 20, 38, 0.03);
@@ -121,6 +129,12 @@
 }
 
 .strategy-pill-auto {
+  background: rgba(32, 216, 155, 0.14);
+  border: 1px solid rgba(32, 216, 155, 0.35);
+  color: #20d89b;
+}
+
+.strategy-pill-executed {
   background: rgba(32, 216, 155, 0.14);
   border: 1px solid rgba(32, 216, 155, 0.35);
   color: #20d89b;
@@ -294,6 +308,16 @@
   border: 1px solid var(--sb-sell-border);
 }
 
+.tag-short {
+  background: var(--sb-short-bg);
+  color: var(--sb-short-color);
+  border: 1px solid var(--sb-short-border);
+}
+
+.strategy-action-tag.tag-executed {
+  box-shadow: 0 0 0 1px rgba(32, 216, 155, 0.3);
+}
+
 /* ── Action Bar (Net Impact & Buttons) ──────────────────────────────── */
 .strategy-action-bar {
   display: flex;
@@ -403,6 +427,41 @@
   color: #20d89b;
   font-size: 0.84rem;
   font-weight: 700;
+}
+
+.strategy-executed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(32, 216, 155, 0.12);
+  border: 1px solid rgba(32, 216, 155, 0.35);
+  border-radius: 8px;
+  padding: 0.55rem 1rem;
+  color: #20d89b;
+  font-size: 0.84rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.strategy-market-closed-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: #ff9f43;
+  background: rgba(255, 159, 67, 0.12);
+  border: 1px solid rgba(255, 159, 67, 0.35);
+  padding: 0.4rem 0.7rem;
+  border-radius: 7px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.result-banner-error {
+  background: rgba(255, 94, 109, 0.12) !important;
+  border-color: rgba(255, 94, 109, 0.35) !important;
+  color: #ff5e6d !important;
 }
 
 /* ── Mode 1: Auto-Trade ON Styles ─────────────────────────────────── */

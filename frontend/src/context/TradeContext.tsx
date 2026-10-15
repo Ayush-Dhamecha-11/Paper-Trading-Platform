@@ -14,6 +14,7 @@ export type InitialBasketItem = {
   price: number;
   action: "buy" | "sell";
   quantity: number;
+  predicted?: boolean;
 };
 
 type TradeModalContextValue = {

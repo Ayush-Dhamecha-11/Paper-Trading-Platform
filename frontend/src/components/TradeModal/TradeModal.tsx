@@ -38,7 +38,13 @@ import {
   getCachedData,
   setCachedData,
 } from "../../utils/dataCache";
-import { executeBatchTrade, updateCapital, fetchDailySuggestions } from "../../utils/tradeApi";
+import {
+  executeBatchTrade,
+  updateCapital,
+  fetchDailySuggestions,
+  markSuggestionsExecuted,
+  areSuggestionsExecutedToday,
+} from "../../utils/tradeApi";
 import { isMarketClosed } from "../../utils/marketUtils";
 import "./TradeModal.css";
 
@@ -49,6 +55,7 @@ export type BasketOrder = {
   price: number;
   action: "buy" | "sell";
   quantity: number;
+  predicted?: boolean;
 };
 
 type Holding = {
@@ -76,6 +83,7 @@ type Props = {
     price: number;
     action: "buy" | "sell";
     quantity: number;
+    predicted?: boolean;
   }>;
 };
 
@@ -299,6 +307,7 @@ export default function TradeModal({
 
     // If initial basket is provided (e.g. from strategy suggestions), populate it
     if (initialBasket && initialBasket.length > 0) {
+      const alreadyDone = areSuggestionsExecutedToday();
       setBasket(
         initialBasket.map((item, idx) => ({
           id: `item_${Date.now()}_${idx}`,
@@ -307,6 +316,7 @@ export default function TradeModal({
           price: item.price,
           action: item.action,
           quantity: item.quantity,
+          predicted: alreadyDone ? false : (item.predicted ?? true),
         }))
       );
       setCandidateStock(null);
@@ -479,10 +489,11 @@ export default function TradeModal({
     }
 
     // Sell action: check if user holds this stock
-    const totalHeld =
+    const rawHeld =
       holdings.find(
         (h) => h.ticker.toUpperCase() === candidateStock.ticker.toUpperCase()
       )?.quantity ?? 0;
+    const totalHeld = Math.max(0, rawHeld);
 
     // Sells already staged in current basket for this stock
     const alreadyInBasket = basket
@@ -495,7 +506,7 @@ export default function TradeModal({
 
     const availableHeld = Math.max(0, totalHeld - alreadyInBasket);
     const regularQty = Math.min(qty, availableHeld);
-    const shortQty = Math.max(0, qty - availableHeld);
+    const shortQty = Math.max(0, qty - regularQty);
 
     const regularCredit = regularQty * price;
     const shortNominal = shortQty * price;
@@ -519,14 +530,16 @@ export default function TradeModal({
   // 1. Buy: full nominal cost added to totalBuy
   // 2. Regular Sell (owned stock): 100% credited against buy requirements (regularSell)
   // 3. Short Sell (unowned stock): 0% proceeds credited (liability); 20% margin frozen from capital
-  // 4. Net Required = (totalBuy - regularSell) + shortMarginToFreeze
+  // 4. Net Required = max(0, totalBuy - regularSell + shortMarginToFreeze)
   // 5. Shortfall = max(0, netRequired - availableCapital)
   const basketAnalysis = useMemo(() => {
     const heldMap = new Map<string, number>();
     holdings.forEach((h) => {
+      // Only positive held quantities represent owned shares that can be sold for proceeds
+      const heldQty = Math.max(0, h.quantity);
       heldMap.set(
         h.ticker.toUpperCase(),
-        (heldMap.get(h.ticker.toUpperCase()) ?? 0) + h.quantity
+        (heldMap.get(h.ticker.toUpperCase()) ?? 0) + heldQty
       );
     });
 
@@ -555,9 +568,10 @@ export default function TradeModal({
       }
 
       // Action is "sell"
-      const currentHeld = heldMap.get(item.ticker.toUpperCase()) ?? 0;
+      const rawHeld = heldMap.get(item.ticker.toUpperCase()) ?? 0;
+      const currentHeld = Math.max(0, rawHeld);
       const regularQty = Math.min(item.quantity, currentHeld);
-      const shortQty = Math.max(0, item.quantity - currentHeld);
+      const shortQty = Math.max(0, item.quantity - regularQty);
 
       // Decrement held quantity for subsequent sells of this stock
       heldMap.set(
@@ -589,7 +603,7 @@ export default function TradeModal({
 
     // Net capital required: buys minus owned proceeds plus 20% frozen short margin
     const netTradeCapital = totalBuy - regularSell;
-    const netRequired = netTradeCapital + shortMarginToFreeze;
+    const netRequired = Math.max(0, netTradeCapital + shortMarginToFreeze);
     const shortfall = netRequired > availableCapital ? netRequired - availableCapital : 0;
     const isOverCapital = shortfall > 0;
     const postTradeBalance = availableCapital - netRequired;
@@ -645,12 +659,15 @@ export default function TradeModal({
     setTradeError("");
 
     try {
+      const alreadyExecutedToday = areSuggestionsExecutedToday();
+      const hadSuggestions = basket.some((o) => o.predicted && !alreadyExecutedToday);
       await executeBatchTrade(
         basket.map((o) => ({
           ticker: o.ticker,
           action: o.action,
           quantity: o.quantity,
           price: o.price,
+          ...((o.predicted && !alreadyExecutedToday) ? { predicted: true } : {}),
         }))
       );
 
@@ -665,6 +682,11 @@ export default function TradeModal({
       setLastExecutedCount(basket.length);
       setBasket([]);
       setTradeStatus("success");
+
+      if (hadSuggestions) {
+        markSuggestionsExecuted();
+        window.dispatchEvent(new CustomEvent("suggestions-executed"));
+      }
 
       // Notify other pages to refresh
       window.dispatchEvent(new CustomEvent("trade-executed"));
@@ -1129,6 +1151,11 @@ export default function TradeModal({
                 className="tm-btn-import-sug"
                 onClick={async () => {
                   const sugs = await fetchDailySuggestions(allStocks);
+                  const isAlreadyDone =
+                    areSuggestionsExecutedToday() ||
+                    sugs.every(
+                      (s) => s.status === "executed" || s.is_executed === true || s.executed === true
+                    );
                   setBasket(
                     sugs.map((s, idx) => ({
                       id: `item_${Date.now()}_${idx}`,
@@ -1137,6 +1164,7 @@ export default function TradeModal({
                       price: s.price,
                       action: s.action,
                       quantity: s.quantity,
+                      predicted: !isAlreadyDone,
                     }))
                   );
                 }}
@@ -1251,7 +1279,9 @@ export default function TradeModal({
               </div>
               <div className="tm-summary-stat">
                 <span>Holdings Sold</span>
-                <strong className="tm-stat-green">+{formatCurrency(regularSell)}</strong>
+                <strong className="tm-stat-green">
+                  {regularSell > 0 ? `+${formatCurrency(regularSell)}` : formatCurrency(0)}
+                </strong>
               </div>
               <div className="tm-summary-stat tm-stat-short-box">
                 <div className="tm-stat-header-row">

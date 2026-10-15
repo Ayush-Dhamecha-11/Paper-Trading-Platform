@@ -125,10 +125,20 @@ function AnalyticsPage() {
     () => analyticsData?.performanceSeries?.[alphaRange] ?? [],
     [analyticsData?.performanceSeries, alphaRange]
   );
-  const stockAllocationTotal = useMemo(
-    () => (analyticsData?.stockAllocation ?? []).reduce((sum, stock) => sum + stock.value, 0),
-    [analyticsData?.stockAllocation]
-  );
+  const stockAllocationTotal = useMemo(() => {
+    const rawTotal = (analyticsData?.stockAllocation ?? []).reduce(
+      (sum, stock) => sum + (typeof stock.value === "number" ? stock.value : 0),
+      0
+    );
+    if (!rawTotal || rawTotal <= 0) return 0;
+    const roundedInt = Math.round(rawTotal);
+    // Standard rounding rules: round off to 100% when sum is ~100% (e.g. 99.99%) from rounded component weights
+    if (roundedInt === 100 && Math.abs(rawTotal - 100) < 0.5) {
+      return 100;
+    }
+    // Keep only up to 2 digits after decimal
+    return Number(rawTotal.toFixed(2));
+  }, [analyticsData?.stockAllocation]);
 
   // ─── Guard checks to only show charts that actually have values ────────────
   const hasBenchmarkSeries = useMemo(

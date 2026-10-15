@@ -147,6 +147,12 @@ const SECTOR_COLORS: Record<string, string> = {
   Energy: "#20d89b",
   FMCG: "#f5b942",
   Pharma: "#f56b6b",
+  Power: "#fb923c",
+  Cement: "#aa3bff",
+  Automobile: "#38bdf8",
+  Metals: "#ff7b87",
+  Infrastructure: "#a78bfa",
+  Consumer: "#4ade80",
 };
 
 const SECTOR_ORDER = ["Banking", "IT", "Energy", "FMCG", "Pharma"];

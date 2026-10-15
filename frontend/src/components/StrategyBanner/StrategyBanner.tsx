@@ -9,17 +9,21 @@ import {
   ArrowRight,
   ShieldCheck,
   RefreshCw,
+  AlertTriangle,
 } from "lucide-react";
 import { formatCurrency } from "../../utils/formatters";
 import {
   fetchDailySuggestions,
   executeSuggestionsAsIs,
+  areSuggestionsExecutedToday,
+  markSuggestionsExecuted,
   type TradeSuggestion,
 } from "../../utils/tradeApi";
 import type { Stock } from "../../data/stocksData";
 import { useTradeModal } from "../../context/TradeContext";
 import { getStoredUserInfo } from "../../utils/authUtils";
 import { getCachedData, HOLDINGS_CACHE_KEY } from "../../utils/dataCache";
+import { isMarketClosed } from "../../utils/marketUtils";
 import "./StrategyBanner.css";
 
 type Props = {
@@ -33,6 +37,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   const [executing, setExecuting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [executionResult, setExecutionResult] = useState<string | null>(null);
+  const [isAlreadyExecuted, setIsAlreadyExecuted] = useState(() => areSuggestionsExecutedToday());
 
   // Check user's auto_trade preference (stored in userInfo)
   const isAutoTradeOn = useMemo(() => {
@@ -47,6 +52,21 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
         if (mounted) {
           setRawSuggestions(data);
           setLoading(false);
+          const allExecuted =
+            data.length > 0 &&
+            data.every(
+              (s) =>
+                s.status === "executed" ||
+                s.is_executed === true ||
+                s.executed === true ||
+                Boolean(s.executedAt)
+            );
+          if (allExecuted) {
+            setIsAlreadyExecuted(true);
+            markSuggestionsExecuted();
+          } else {
+            setIsAlreadyExecuted(false);
+          }
         }
       })
       .catch(() => {
@@ -56,6 +76,18 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
       mounted = false;
     };
   }, [stocks]);
+
+  // Listen for suggestion executions across components (e.g. from TradeModal after customizing)
+  useEffect(() => {
+    const handleSuggestionsExecuted = () => {
+      setIsAlreadyExecuted(true);
+      setExecutionResult("All strategy suggestions executed successfully!");
+    };
+    window.addEventListener("suggestions-executed", handleSuggestionsExecuted);
+    return () => {
+      window.removeEventListener("suggestions-executed", handleSuggestionsExecuted);
+    };
+  }, []);
 
   // Filter out any stocks with 0 quantity (backend might send 0 buy or 0 sell)
   const validSuggestions = useMemo(() => {
@@ -70,9 +102,11 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
       getCachedData<Array<{ ticker: string; quantity: number }>>(HOLDINGS_CACHE_KEY) ?? [];
     const heldMap = new Map<string, number>();
     cachedHoldings.forEach((h) => {
+      // Only positive held quantities represent owned shares that can be sold for proceeds
+      const heldQty = Math.max(0, h.quantity);
       heldMap.set(
         h.ticker.toUpperCase(),
-        (heldMap.get(h.ticker.toUpperCase()) ?? 0) + h.quantity
+        (heldMap.get(h.ticker.toUpperCase()) ?? 0) + heldQty
       );
     });
 
@@ -80,14 +114,17 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
     let regularSell = 0;
     let shortNominal = 0;
     let shortMarginToFreeze = 0;
+    const itemActionMap = new Map<string, "buy" | "sell" | "short">();
 
     validSuggestions.forEach((item) => {
       if (item.action === "buy") {
         buyTotal += item.price * item.quantity;
+        itemActionMap.set(item.id, "buy");
       } else {
-        const currentHeld = heldMap.get(item.ticker.toUpperCase()) ?? 0;
+        const rawHeld = heldMap.get(item.ticker.toUpperCase()) ?? 0;
+        const currentHeld = Math.max(0, rawHeld);
         const regQty = Math.min(item.quantity, currentHeld);
-        const sQty = Math.max(0, item.quantity - currentHeld);
+        const sQty = Math.max(0, item.quantity - regQty);
         heldMap.set(item.ticker.toUpperCase(), Math.max(0, currentHeld - regQty));
 
         const regAmt = regQty * item.price;
@@ -97,11 +134,12 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
         regularSell += regAmt;
         shortNominal += sNom;
         shortMarginToFreeze += margin;
+        itemActionMap.set(item.id, currentHeld <= 0 ? "short" : "sell");
       }
     });
 
     const netTradeCapital = buyTotal - regularSell;
-    const netRequired = netTradeCapital + shortMarginToFreeze;
+    const netRequired = Math.max(0, netTradeCapital + shortMarginToFreeze);
 
     return {
       buyTotal,
@@ -109,6 +147,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
       shortNominal,
       shortMarginToFreeze,
       netRequired,
+      itemActionMap,
     };
   }, [validSuggestions]);
 
@@ -164,13 +203,15 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
               </tr>
             </thead>
             <tbody>
-              {validSuggestions.map((item) => (
-                <tr key={item.id}>
-                  <td className="sb-col-action">
-                    <span className={`strategy-action-tag tag-${item.action}`}>
-                      {item.action === "buy" ? "BOUGHT" : "SOLD"}
-                    </span>
-                  </td>
+              {validSuggestions.map((item) => {
+                const actionType = breakdown.itemActionMap.get(item.id) ?? item.action;
+                return (
+                  <tr key={item.id} className={`sb-row-${actionType}`}>
+                    <td className="sb-col-action">
+                      <span className={`strategy-action-tag tag-${actionType}`}>
+                        {actionType === "buy" ? "BOUGHT" : actionType === "short" ? "SHORT" : "SOLD"}
+                      </span>
+                    </td>
                   <td>
                     <div className="sb-stock-cell">
                       <strong className="sb-ticker">{item.ticker}</strong>
@@ -183,7 +224,8 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
                     {formatCurrency(item.price * item.quantity)}
                   </td>
                 </tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
         </div>
@@ -196,14 +238,21 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
     );
   }
 
-  // ── Mode 2: Auto-Trade is OFF (Pending suggestions need user action) ──────
+  const marketClosed = isMarketClosed(stocks);
+
   const handleExecuteAsIs = async () => {
+    if (marketClosed) {
+      setExecutionResult("Cannot execute suggestions: The stock market is currently closed.");
+      return;
+    }
     setExecuting(true);
     try {
       await executeSuggestionsAsIs(validSuggestions);
+      markSuggestionsExecuted();
+      setIsAlreadyExecuted(true);
       setExecutionResult("All strategy suggestions executed successfully!");
+      window.dispatchEvent(new CustomEvent("suggestions-executed"));
       window.dispatchEvent(new CustomEvent("trade-executed"));
-      setTimeout(() => setDismissed(true), 3000);
     } catch (err) {
       setExecutionResult(err instanceof Error ? err.message : "Execution failed");
     } finally {
@@ -212,6 +261,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   };
 
   const handleCustomize = () => {
+    const isAlreadyDone = isAlreadyExecuted || areSuggestionsExecutedToday();
     openTradeWithBasket(
       validSuggestions.map((s) => ({
         ticker: s.ticker,
@@ -219,6 +269,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
         price: s.price,
         action: s.action,
         quantity: s.quantity,
+        predicted: !isAlreadyDone,
       }))
     );
   };
@@ -228,17 +279,34 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
       <div className="strategy-banner-header">
         <div className="strategy-title-group">
           <div className="strategy-tag-row">
-            <span className="strategy-pill strategy-pill-suggestion">
-              <Zap size={13} aria-hidden="true" />
-              Daily Strategy Desk
+            <span
+              className={`strategy-pill ${
+                isAlreadyExecuted ? "strategy-pill-executed" : "strategy-pill-suggestion"
+              }`}
+            >
+              {isAlreadyExecuted ? (
+                <>
+                  <CheckCircle2 size={13} aria-hidden="true" />
+                  Executed
+                </>
+              ) : (
+                <>
+                  <Zap size={13} aria-hidden="true" />
+                  Daily Strategy Desk
+                </>
+              )}
             </span>
-            <span className="strategy-mode-indicator">Auto-Trade: OFF</span>
+            <span className="strategy-mode-indicator">
+              {isAlreadyExecuted ? "Strategy Executed for Today" : "Auto-Trade: OFF"}
+            </span>
           </div>
           <h3 className="strategy-heading">
             Today&apos;s Trade Suggestions ({validSuggestions.length} stocks: {buyCount} buy, {sellCount} sell)
           </h3>
           <p className="strategy-desc">
-            Algorithm-generated trade recommendations. Execute directly as-is or customize quantities in your trade basket.
+            {isAlreadyExecuted
+              ? "Today's recommended algorithm trades have been executed. Positions are updated in your portfolio."
+              : "Algorithm-generated trade recommendations. Execute directly as-is or customize quantities in your trade basket."}
           </p>
         </div>
 
@@ -268,13 +336,35 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
             <tbody>
               {validSuggestions.map((item) => {
                 const subtotal = item.price * item.quantity;
+                const isItemDone =
+                  isAlreadyExecuted ||
+                  item.status === "executed" ||
+                  item.is_executed === true ||
+                  item.executed === true ||
+                  Boolean(item.executedAt);
+
+                const actionType = breakdown.itemActionMap.get(item.id) ?? item.action;
+
                 return (
-                  <tr key={item.id} className={`sb-row-${item.action}`}>
+                  <tr key={item.id} className={`sb-row-${actionType}`}>
                     <td className="sb-col-action">
-                      <span className={`strategy-action-tag tag-${item.action}`}>
-                        {item.action === "buy" ? (
+                      <span
+                        className={`strategy-action-tag tag-${actionType} ${
+                          isItemDone ? "tag-executed" : ""
+                        }`}
+                      >
+                        {isItemDone ? (
+                          <>
+                            <CheckCircle2 size={12} aria-hidden="true" />
+                            {actionType === "buy" ? "BUY" : actionType === "short" ? "SHORT" : "SELL"}
+                          </>
+                        ) : actionType === "buy" ? (
                           <>
                             <TrendingUp size={12} aria-hidden="true" /> BUY
+                          </>
+                        ) : actionType === "short" ? (
+                          <>
+                            <TrendingDown size={12} aria-hidden="true" /> SHORT
                           </>
                         ) : (
                           <>
@@ -319,41 +409,74 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
           </div>
 
           <div className="strategy-btn-group">
-            <button
-              type="button"
-              className="strategy-btn-customize"
-              onClick={handleCustomize}
-              title="Customize quantities, add/remove stocks in the trade basket"
-            >
-              <Sliders size={14} aria-hidden="true" />
-              <span>Customize &amp; Edit</span>
-            </button>
+            {!isAlreadyExecuted ? (
+              <>
+                {marketClosed && (
+                  <span className="strategy-market-closed-warning" title="Stock market is currently closed">
+                    <AlertTriangle size={13} aria-hidden="true" />
+                    <span>Market Closed</span>
+                  </span>
+                )}
 
-            <button
-              type="button"
-              className="strategy-btn-execute"
-              onClick={() => void handleExecuteAsIs()}
-              disabled={executing}
-              title="Execute all suggestions directly as recommended"
-            >
-              {executing ? (
-                <>
-                  <RefreshCw size={14} className="strategy-spin" aria-hidden="true" />
-                  <span>Executing…</span>
-                </>
-              ) : (
-                <>
-                  <span>Execute As-Is</span>
-                  <ArrowRight size={14} aria-hidden="true" />
-                </>
-              )}
-            </button>
+                <button
+                  type="button"
+                  className="strategy-btn-customize"
+                  onClick={handleCustomize}
+                  title="Customize quantities, add/remove stocks in the trade basket"
+                >
+                  <Sliders size={14} aria-hidden="true" />
+                  <span>Customize &amp; Edit</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="strategy-btn-execute"
+                  onClick={() => void handleExecuteAsIs()}
+                  disabled={executing || marketClosed}
+                  title={
+                    marketClosed
+                      ? "Cannot execute suggestions because the stock market is closed"
+                      : "Execute all suggestions directly as recommended"
+                  }
+                >
+                  {executing ? (
+                    <>
+                      <RefreshCw size={14} className="strategy-spin" aria-hidden="true" />
+                      <span>Executing…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Execute As-Is</span>
+                      <ArrowRight size={14} aria-hidden="true" />
+                    </>
+                  )}
+                </button>
+              </>
+            ) : (
+              <div className="strategy-executed-badge" role="status">
+                <CheckCircle2 size={15} aria-hidden="true" />
+                <span>Already Executed</span>
+              </div>
+            )}
           </div>
         </div>
 
         {executionResult && (
-          <div className="strategy-result-banner" role="status">
-            <CheckCircle2 size={16} aria-hidden="true" />
+          <div
+            className={`strategy-result-banner ${
+              executionResult.toLowerCase().includes("closed") ||
+              executionResult.toLowerCase().includes("failed")
+                ? "result-banner-error"
+                : ""
+            }`}
+            role="status"
+          >
+            {executionResult.toLowerCase().includes("closed") ||
+            executionResult.toLowerCase().includes("failed") ? (
+              <AlertTriangle size={16} aria-hidden="true" />
+            ) : (
+              <CheckCircle2 size={16} aria-hidden="true" />
+            )}
             <span>{executionResult}</span>
           </div>
         )}

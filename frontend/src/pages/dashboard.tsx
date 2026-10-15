@@ -404,6 +404,24 @@ function DashboardPage() {
     window.addEventListener("trade-executed", handleDataRefresh);
     window.addEventListener("capital-updated", handleDataRefresh);
 
+    const handleWarmed = () => {
+      const stocksCached = getCachedData<Stock[]>(DASHBOARD_STOCKS_CACHE_KEY);
+      if (stocksCached && stocksCached.length > 0) {
+        setStocks(stocksCached);
+        setStocksLoading(false);
+      }
+      const summaryCached = getCachedData<PortfolioSummary>(DASHBOARD_SUMMARY_CACHE_KEY);
+      if (summaryCached) {
+        setPortfolioSummary(summaryCached);
+        setSummaryLoading(false);
+      }
+      const holdingsCached = getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY);
+      if (holdingsCached) {
+        setHoldings(holdingsCached);
+      }
+    };
+    window.addEventListener("dashboard-data-warmed", handleWarmed);
+
     const refreshTimer = window.setInterval(() => {
       void refreshStocks();
       void refreshHoldings();
@@ -416,6 +434,7 @@ function DashboardPage() {
       window.clearInterval(refreshTimer);
       window.removeEventListener("trade-executed", handleDataRefresh);
       window.removeEventListener("capital-updated", handleDataRefresh);
+      window.removeEventListener("dashboard-data-warmed", handleWarmed);
     };
   }, [cachedStocks]);
 

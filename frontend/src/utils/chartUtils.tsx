@@ -201,6 +201,59 @@ const PALETTE = [
   "#4ade80", "#f43f5e", "#06b6d4", "#eab308", "#818cf8", "#10b981",
 ];
 
+export function isGreyOrNeutralColor(colorStr?: string): boolean {
+  if (!colorStr) return true;
+  const c = colorStr.trim().toLowerCase();
+  if (
+    c === "" ||
+    c === "transparent" ||
+    c === "none" ||
+    c === "gray" ||
+    c === "grey" ||
+    c === "#808080" ||
+    c === "#94a3b8" ||
+    c === "#64748b" ||
+    c === "#9ca3af" ||
+    c === "#cbd5e1" ||
+    c === "#8ea2b7" ||
+    c === "#9fb3c8" ||
+    c === "#475569" ||
+    c === "#334155" ||
+    c === "#718096" ||
+    c === "#a0aec0" ||
+    c === "#e2e8f0" ||
+    c === "#f1f5f9"
+  ) {
+    return true;
+  }
+  if (c.startsWith("#")) {
+    let hex = c.slice(1);
+    if (hex.length === 3) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+        if (Math.max(r, g, b) - Math.min(r, g, b) < 24) {
+          return true;
+        }
+      }
+    }
+  }
+  const rgbMatch = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (rgbMatch) {
+    const r = parseInt(rgbMatch[1], 10);
+    const g = parseInt(rgbMatch[2], 10);
+    const b = parseInt(rgbMatch[3], 10);
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 24) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function AllocationDoughnutChart({
   sectors,
 }: Readonly<{
@@ -214,17 +267,28 @@ export function AllocationDoughnutChart({
 
   const coloredSectors = useMemo(() => {
     if (!sectors || sectors.length === 0) return [];
-    const rawColors = sectors.map((s) => (s.color ? s.color.trim().toLowerCase() : ""));
-    const hasMissing = rawColors.some((c) => !c || c === "transparent" || c === "none");
-    const firstColor = rawColors[0];
-    const allSame = rawColors.length > 1 && rawColors.every((c) => c === firstColor);
 
-    return sectors.map((s, idx) => ({
-      ...s,
-      color: hasMissing || allSame || !s.color || s.color === "transparent"
-        ? PALETTE[idx % PALETTE.length]
-        : s.color,
-    }));
+    const usedColors = new Set<string>();
+
+    return sectors.map((s, idx) => {
+      const rawColor = s.color ? s.color.trim() : "";
+      const isGrey = isGreyOrNeutralColor(rawColor);
+      const isDuplicate = Boolean(rawColor && usedColors.has(rawColor.toLowerCase()));
+
+      let finalColor = rawColor;
+      if (isGrey || isDuplicate || !finalColor) {
+        const unused = PALETTE.find((c) => !usedColors.has(c.toLowerCase()));
+        finalColor = unused ?? PALETTE[idx % PALETTE.length];
+      }
+
+      usedColors.add(finalColor.toLowerCase());
+
+      return {
+        ...s,
+        value: Number(Number(s.value).toFixed(2)),
+        color: finalColor,
+      };
+    });
   }, [sectors]);
 
   const chartData = useMemo(() => getAllocationChartData(coloredSectors), [coloredSectors]);
@@ -251,7 +315,7 @@ export function AllocationDoughnutChart({
           }}
         >
           <span>{activeSector.name}</span>
-          <strong>{activeSector.value}%</strong>
+          <strong>{Number(Number(activeSector.value).toFixed(2))}%</strong>
         </div>
       )}
     </div>

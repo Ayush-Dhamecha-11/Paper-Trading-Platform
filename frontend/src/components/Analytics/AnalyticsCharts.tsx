@@ -13,7 +13,7 @@ import {
   type ChartOptions,
 } from "chart.js";
 import { Bar, Line, Scatter } from "react-chartjs-2";
-import { AllocationDoughnutChart } from "../../utils/chartUtils";
+import { AllocationDoughnutChart, isGreyOrNeutralColor } from "../../utils/chartUtils";
 import type {
   AllocationPoint,
   MonthlyReturn,
@@ -47,16 +47,21 @@ export const CHART_PALETTE = [
 export function ensureDistinctColors<T extends { color?: string }>(items: T[]): (T & { color: string })[] {
   if (!items || items.length === 0) return [];
 
-  const rawColors = items.map((item) => (item.color ? item.color.trim().toLowerCase() : ""));
-  const hasMissing = rawColors.some((c) => !c || c === "transparent" || c === "none");
-  const firstColor = rawColors[0];
-  const allSame = rawColors.length > 1 && rawColors.every((c) => c === firstColor);
+  const usedColors = new Set<string>();
 
   return items.map((item, index) => {
-    let finalColor = item.color;
-    if (hasMissing || allSame || !finalColor || finalColor === "transparent") {
-      finalColor = CHART_PALETTE[index % CHART_PALETTE.length];
+    const rawColor = item.color ? item.color.trim() : "";
+    const isGrey = isGreyOrNeutralColor(rawColor);
+    const isDuplicate = Boolean(rawColor && usedColors.has(rawColor.toLowerCase()));
+
+    let finalColor = rawColor;
+    if (isGrey || isDuplicate || !finalColor) {
+      const unused = CHART_PALETTE.find((c) => !usedColors.has(c.toLowerCase()));
+      finalColor = unused ?? CHART_PALETTE[index % CHART_PALETTE.length];
     }
+
+    usedColors.add(finalColor.toLowerCase());
+
     return {
       ...item,
       color: finalColor,
@@ -243,7 +248,7 @@ export function AllocationChart({ points }: Readonly<{ points: AllocationPoint[]
     <AllocationDoughnutChart
       sectors={coloredPoints.map((point) => ({
         name: point.label,
-        value: point.value,
+        value: Number(Number(point.value).toFixed(2)),
         color: point.color,
       }))}
     />
@@ -260,13 +265,22 @@ export function HorizontalBarChart({
   showTotal?: boolean;
 }>) {
   const coloredPoints = useMemo(() => ensureDistinctColors(points), [points]);
-  const total = coloredPoints.reduce((sum, point) => sum + point.value, 0);
+  const rawTotal = coloredPoints.reduce(
+    (sum, point) => sum + (typeof point.value === "number" ? point.value : 0),
+    0
+  );
+  const roundedInt = Math.round(rawTotal);
+  const total =
+    roundedInt === 100 && Math.abs(rawTotal - 100) < 0.5
+      ? 100
+      : Number(rawTotal.toFixed(2));
+
   const data: ChartData<"bar"> = {
     labels: coloredPoints.map((point) => point.label),
     datasets: [
       {
         label: showTotal ? `Total ${total.toLocaleString("en-IN")}${valueSuffix}` : "Value",
-        data: coloredPoints.map((point) => point.value),
+        data: coloredPoints.map((point) => Number(Number(point.value).toFixed(2))),
         backgroundColor: coloredPoints.map((point) => point.color),
         borderRadius: 8,
       },
@@ -285,7 +299,7 @@ export function HorizontalBarChart({
           tooltip: {
             ...(sharedChartOptions() as ChartOptions<"bar">).plugins?.tooltip,
             callbacks: {
-              label: (context) => ` ${Number(context.parsed.x).toLocaleString("en-IN")}${valueSuffix}`,
+              label: (context) => ` ${Number(Number(context.parsed.x).toFixed(2)).toLocaleString("en-IN")}${valueSuffix}`,
             },
           },
         },
