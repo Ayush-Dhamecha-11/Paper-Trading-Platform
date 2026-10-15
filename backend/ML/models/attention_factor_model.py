@@ -70,7 +70,7 @@ sibling_dir = great_grandparent / "data"
 sys.path.append(str(sibling_dir))
 print(sibling_dir)
 
-from data_loader import DataLoader
+from data.data_loader import DataLoader
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

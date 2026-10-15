@@ -23,7 +23,7 @@ def get_user_profile(
     db: Session = Depends(get_db),
 ):  
 
-    print("user:",  current_user)
+    #print("user:",  current_user)
     user_id = current_user["id"]
     email = current_user.get("email")
     metadata = current_user.get("user_metadata", {})

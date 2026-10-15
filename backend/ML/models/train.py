@@ -48,8 +48,8 @@ if str(ml_dir) not in sys.path:
     sys.path.append(str(ml_dir))
 
 from data_loader import DataLoader
-from attention_factor_model import AttentionFactorModel
-from hf_checkpoint_manager import upload_checkpoint, download_checkpoint
+from ML.models.attention_factor_model import AttentionFactorModel
+from ML.hf_checkpoint_manager import upload_checkpoint, download_checkpoint
 
 logging.basicConfig(
     level=logging.INFO,
@@ -178,7 +178,7 @@ class RollingTrainer:
         self,
         X: torch.Tensor,
         R: torch.Tensor,
-        splits: List[dict],
+        split: dict,
         dates: List,
         symbols: List[str],
     ) -> Dict:
@@ -199,7 +199,6 @@ class RollingTrainer:
         logger.info(f"  Stocks (N)     : {N}")
         logger.info(f"  Features (M)   : {M}")
         logger.info(f"  Factors (K)    : {self.cfg.K}")
-        logger.info(f"  Windows        : {len(splits)}")
         logger.info(f"  Epochs/window  : {self.cfg.epochs}")
         logger.info(f"  Device         : {self.cfg.device}")
         logger.info("-" * 65)
@@ -211,69 +210,58 @@ class RollingTrainer:
         if self.cfg.mode == "pca":
             latent_pca_factors = self.compute_pca_factor(R, self.cfg.K, 126)
 
-        for split in splits:
-            window_num = split["window"]
-            logger.info("")
-            logger.info("-" * 65)
-            logger.info(
-                f"WINDOW {window_num}/{len(splits)}  |  "
-                f"Train: {split['train_start'].date()} --> {split['train_end'].date()}  |  "
-                f"Test:  {split['test_start'].date()} --> {split['test_end'].date()}"
-            )
-            logger.info("-" * 65)
+        window_num = split["window"]
 
-            # Slice tensors for this window
-            X_train = X[split["train_idx_start"] : split["train_idx_end"]]
-            R_train = R[split["train_idx_start"] : split["train_idx_end"]]
+        # Slice tensors for this window
+        X_train = X[split["train_idx_start"] : split["train_idx_end"]]
+        R_train = R[split["train_idx_start"] : split["train_idx_end"]]
 
-            X_val = X[split["val_idx_start"] : split["val_idx_end"]]
-            R_val = R[split["val_idx_start"] : split["val_idx_end"]]
+        X_val = X[split["val_idx_start"] : split["val_idx_end"]]
+        R_val = R[split["val_idx_start"] : split["val_idx_end"]]
 
-            X_test = X[split["test_idx_start"] : split["test_idx_end"]]
-            R_test = R[split["test_idx_start"] : split["test_idx_end"]]
+        #X_test = X[split["test_idx_start"] : split["test_idx_end"]]
+        #R_test = R[split["test_idx_start"] : split["test_idx_end"]]
 
-            test_dates = dates[split["test_idx_start"] : split["test_idx_end"]]
+        test_dates = dates[split["test_idx_start"] : split["test_idx_end"]]
 
-            logger.info(
-                f"  Shapes - train: {tuple(X_train.shape)}  "
-                f"val: {tuple(X_val.shape)}  "
-                f"test: {tuple(X_test.shape)}"
-            )
-            
-            if self.cfg.mode == "pca":
-                factor_train = latent_pca_factors[split["train_idx_start"] : split["train_idx_end"]]
-                factor_val = latent_pca_factors[split["val_idx_start"] : split["val_idx_end"]]
-            else:
-                factor_train = None
-                factor_val = None
-            
-            # Create fresh model for this window
-            model = AttentionFactorModel(
-                N = N,
-                M = M,
-                K = self.cfg.K,
-                d = self.cfg.d,
-                s = self.cfg.s,
-                lambda_ridge = self.cfg.lambda_ridge,
-                d_hidden_conv = self.cfg.d_hidden_conv,
-                lambda_squash = self.cfg.lambda_squash,
-                dropout = self.cfg.dropout,
-            ).to(self.cfg.device)
+        logger.info(
+            f"  Shapes - train: {tuple(X_train.shape)}  "
+            f"val: {tuple(X_val.shape)}  "
+        )
+        
+        if self.cfg.mode == "pca":
+            factor_train = latent_pca_factors[split["train_idx_start"] : split["train_idx_end"]]
+            factor_val = latent_pca_factors[split["val_idx_start"] : split["val_idx_end"]]
+        else:
+            factor_train = None
+            factor_val = None
+        
+        # Create fresh model for this window
+        model = AttentionFactorModel(
+            N = N,
+            M = M,
+            K = self.cfg.K,
+            d = self.cfg.d,
+            s = self.cfg.s,
+            lambda_ridge = self.cfg.lambda_ridge,
+            d_hidden_conv = self.cfg.d_hidden_conv,
+            lambda_squash = self.cfg.lambda_squash,
+            dropout = self.cfg.dropout,
+        ).to(self.cfg.device)
 
-            # Train on this window
-            best_val_loss, best_epoch = self.train_window(
-                model, X_train, R_train, X_val, R_val, factor_train, factor_val, window_num
-            )
+        # Train on this window
+        best_val_loss, best_epoch = self.train_window(
+            model, X_train, R_train, X_val, R_val, factor_train, factor_val, window_num
+        )
 
-            logger.info(
-                f"  Shapes - train: {tuple(X_train.shape)}  "
-                f"val: {tuple(X_val.shape)}  "
-                f"test: {tuple(X_test.shape)}"
-            )
-            
-            logger.info(
-                f"window {window_num} - Best Validation Loss - {best_val_loss} | Best Epoch - {best_epoch}"
-            )
+        logger.info(
+            f"  Shapes - train: {tuple(X_train.shape)}  "
+            f"val: {tuple(X_val.shape)}  "
+        )
+        
+        logger.info(
+            f"window {window_num} - Best Validation Loss - {best_val_loss} | Best Epoch - {best_epoch}"
+        )
 
         logger.info("-" * 65)
         logger.info(f"Training completed for K={self.cfg.K}")
@@ -447,10 +435,9 @@ class RollingTrainer:
             # Compute loss
             loss, info = model.attention_factor_loss(
                 returns_net = seq_output["returns_net"],
-                omegas = seq_output["omegas"],
                 eps_t = seq_output["eps_t"],
                 R_t = seq_output["R_t"],
-                R_f = X[model.s:, 0, 23],
+                R_f = torch.zeros(X.shape[0]-self.cfg.s, device=X.device),
                 lambda_var = self.cfg.lambda_var,
             )
 

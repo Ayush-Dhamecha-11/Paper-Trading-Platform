@@ -72,7 +72,7 @@ class HistDataFetcher:
                 else:
                     ticker = yf.Ticker(f'{symbol}.NS')
 
-                df = ticker.history(start=start_date, end=end_date, interval=interval, auto_adjust=False)
+                df = ticker.history(start=start_date.date(), end=end_date.date(), interval=interval, auto_adjust=False)
 
                 if df.empty:
                     logger.warning(f"  No price data for {symbol} — skipping")
@@ -135,7 +135,7 @@ class HistDataFetcher:
                     ticker = yf.Ticker(symbol)
                 else:
                     ticker = yf.Ticker(f"{symbol}.NS")
-                hist = ticker.history(start=start, end=end, interval="1d", auto_adjust=False)
+                hist = ticker.history(start=start.date(), end=end.date(), interval="1d", auto_adjust=False)
             
                 if hist.empty:
                     logger.warning(f"No EOD data for {symbol} on {target_date}")
@@ -287,8 +287,8 @@ class HistDataFetcher:
 def main():
 
     data_fetcher = HistDataFetcher()
-    end_date   = datetime(2026, 9, 13)
-    start_date = datetime(2026, 9, 10)
+    end_date   = datetime(2026, 10, 14)
+    start_date = datetime(2026, 10, 13)
 
     data_fetcher.run_and_fetch(start_date=start_date, end_date=end_date)
 

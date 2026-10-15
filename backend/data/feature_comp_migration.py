@@ -432,7 +432,7 @@ def compute_for_date(target_date: date) -> tuple[int, int]:
         raw_frames = {}
         for i, symbol in enumerate(symbols):
             hist = load_price_history(db, symbol, start=window_start, end=target_date)
-            if hist.empty or hist.index[-1].date() != target_date:
+            if hist.empty or hist.index[-1] != target_date:
                 logger.warning(f"{symbol}: no price row for {target_date} - skipping")
                 skipped += 1
                 continue
@@ -520,21 +520,30 @@ def backfill_all(start_date: date, end_date: date) -> tuple[int, int]:
             return 0, 0
 
         market_hist = load_price_history(db, MARKET_INDEX_SYMBOL, start=start_date, end=end_date)
-
-        pieces = []
+        hist_data = {}
         for i, symbol in enumerate(symbols):
-            logger.info(f"[{i+1}/{len(symbols)}] computing raw characteristics for {symbol}")
             hist = load_price_history(db, symbol, start=start_date, end=end_date)
             if hist.empty:
                 logger.warning(f"{symbol}: no price history in range - skipping")
                 skipped += 1
                 continue
+            hist_data[symbol] = hist
+
+        pieces = []
+        for i, symbol in enumerate(symbols):
+            logger.info(f"[{i+1}/{len(symbols)}] computing raw characteristics for {symbol}")
+            
+            #hist = load_price_history(db, symbol, start=start_date, end=end_date)
+            #if hist.empty:
+            #    logger.warning(f"{symbol}: no price history in range - skipping")
+            #    skipped += 1
+            #    continue
 
             if symbol == MARKET_INDEX_SYMBOL:
                 continue  # don't compute characteristics for the market index
 
             try:
-                raw = compute_raw_characteristics_for_symbol(hist, market_hist, incremental=False)
+                raw = compute_raw_characteristics_for_symbol(hist_data[symbol], market_hist, incremental=False)
             except Exception as e:
                 logger.error(f"{symbol}: characteristic computation failed - {e}")
                 skipped += 1
@@ -567,10 +576,10 @@ def backfill_all(start_date: date, end_date: date) -> tuple[int, int]:
 
 
 def main():
-    backfill = True
+    backfill = False
 
     if backfill:
-        end_date = datetime(2026, 9, 13)
+        end_date = datetime(2026, 10, 12)
         start_date = datetime(2011, 12, 1)
         written, _ = backfill_all(start_date, end_date)
     else:
