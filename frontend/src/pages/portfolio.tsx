@@ -13,13 +13,16 @@ import { formatChangePercent, formatCurrency } from "../utils/formatters";
 import { useTradeModal } from "../context/TradeContext";
 import {
   HOLDINGS_CACHE_KEY,
+  PORTFOLIO_CACHE_KEY,
   CAPITAL_CACHE_KEY,
   DASHBOARD_SUMMARY_CACHE_KEY,
+  getCachedData,
   setCachedData,
 } from "../utils/dataCache";
+import { fetchPortfolioData } from "../utils/dashboardPrefetch";
 import "../pages_css/portfolio.css";
 
-type PortfolioHolding = {
+export type PortfolioHolding = {
   ticker: string;
   name: string;
   sector: string;
@@ -29,7 +32,7 @@ type PortfolioHolding = {
   previousClose: number;
 };
 
-type PortfolioData = {
+export type PortfolioData = {
   summary: {
     portfolioValue: number;
     investedCapital: number;
@@ -97,8 +100,14 @@ async function loadPortfolioData(): Promise<PortfolioData> {
 
 function PortfolioPage() {
   const { openTrade } = useTradeModal();
-  const [status, setStatus] = useState<"loading" | "ready" | "empty">("loading");
-  const [data, setData] = useState<PortfolioData>(DUMMY_PORTFOLIO_DATA);
+  const cachedPortfolio = getCachedData<PortfolioData>(PORTFOLIO_CACHE_KEY);
+  const [data, setData] = useState<PortfolioData>(cachedPortfolio ?? DUMMY_PORTFOLIO_DATA);
+  const [status, setStatus] = useState<"loading" | "ready" | "empty">(() => {
+    if (cachedPortfolio) {
+      return (!cachedPortfolio.holdings || cachedPortfolio.holdings.length === 0) ? "empty" : "ready";
+    }
+    return "loading";
+  });
   const [holdingSearch, setHoldingSearch] = useState("");
   const [holdingSector, setHoldingSector] = useState("all");
   const [holdingPerformance, setHoldingPerformance] = useState<HoldingPerformanceFilter>("all");
@@ -107,14 +116,17 @@ function PortfolioPage() {
     return { name: stored?.name?.trim() || "User", email: stored?.email?.trim() || "--" };
   });
 
-  const refreshPortfolio = useCallback((isMountedRef: { current: boolean }) => {
-    setStatus("loading");
-    loadPortfolioData()
+  const refreshPortfolio = useCallback((isMountedRef: { current: boolean }, showLoading = false) => {
+    if (showLoading) {
+      setStatus("loading");
+    }
+    fetchPortfolioData()
       .then((portfolio) => {
         if (!isMountedRef.current) return;
         if (!portfolio || !portfolio.holdings || portfolio.holdings.length === 0) {
           setStatus("empty");
         } else {
+          setCachedData(PORTFOLIO_CACHE_KEY, portfolio);
           setData(portfolio);
           setStatus("ready");
           if (Array.isArray(portfolio.holdings)) {
@@ -124,7 +136,12 @@ function PortfolioPage() {
       })
       .catch(() => {
         if (isMountedRef.current) {
-          setStatus("empty");
+          const currentCached = getCachedData<PortfolioData>(PORTFOLIO_CACHE_KEY);
+          if (currentCached && currentCached.holdings?.length) {
+            setStatus("ready");
+          } else {
+            setStatus("empty");
+          }
         }
       });
   }, []);
@@ -149,9 +166,10 @@ function PortfolioPage() {
 
     const handleDataRefresh = () => {
       sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+      sessionStorage.removeItem(PORTFOLIO_CACHE_KEY);
       sessionStorage.removeItem(CAPITAL_CACHE_KEY);
       sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
-      refreshPortfolio(mounted);
+      refreshPortfolio(mounted, false);
     };
     window.addEventListener("trade-executed", handleDataRefresh);
     window.addEventListener("capital-updated", handleDataRefresh);

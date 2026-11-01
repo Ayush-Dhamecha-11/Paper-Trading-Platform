@@ -19,14 +19,14 @@ export const getBackendBaseUrl = () =>
   ).replace(/\/$/, "");
 
 export const logBackendResponse = (response: Response, requestName: string) => {
-  void response.clone().text().then((body) => {
+  try { if (!response.bodyUsed) { void response.clone().text().then((body) => {
     console.groupCollapsed(`[Backend response] ${requestName}`);
     console.log("URL:", response.url);
     console.log("Status:", response.status, response.statusText);
     console.log("Headers:", Object.fromEntries(response.headers.entries()));
     console.log("Body:", body);
     console.groupEnd();
-  });
+    }).catch(() => {}); } } catch {}
 };
 
 const refreshSession = async () => {

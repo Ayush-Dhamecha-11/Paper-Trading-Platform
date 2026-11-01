@@ -1,7 +1,7 @@
 import type { Stock } from "../data/stocksData";
 import { STOCK_UNIVERSE } from "../data/stocksData";
 import { authenticatedFetch, getBackendBaseUrl, logBackendResponse } from "./authUtils";
-import { DASHBOARD_STOCKS_CACHE_KEY, getCachedData } from "./dataCache";
+import { DASHBOARD_STOCKS_CACHE_KEY, SUGGESTIONS_CACHE_KEY, getCachedData, setCachedData } from "./dataCache";
 import { isMarketClosed } from "./marketUtils";
 
 export type TradeAction = "buy" | "sell";
@@ -173,27 +173,82 @@ export async function fetchDailySuggestions(availableStocks?: Stock[]): Promise<
     );
     logBackendResponse(response, "GET /api/strategy/suggestions");
     if (response.ok) {
-      const data = await response.json();
-      const rawList: TradeSuggestion[] = Array.isArray(data)
-        ? data
-        : data.suggestions ?? [];
+      let data: unknown;
+      try {
+        const rawText = await response.text();
+        try {
+          data = JSON.parse(rawText);
+        } catch (err) {
+          data = rawText;
+        }
+      } catch (streamErr) {
+        console.warn("[fetchDailySuggestions] Stream reading error, falling back to json():", streamErr);
+        data = await response.json();
+      }
 
-      // Filter out stocks with 0 buy or 0 sell quantity
-      const valid = rawList.filter((item) => typeof item.quantity === "number" && item.quantity > 0);
+      if (typeof data === "string") {
+        try {
+          data = JSON.parse(data);
+        } catch (err) {
+          // ignore
+        }
+      }
+      let candidateList: unknown[] = [];
+      if (Array.isArray(data)) {
+        candidateList = data;
+      } else if (data && typeof data === "object") {
+        const obj = data as Record<string, unknown>;
+        const list = obj.suggestions ?? obj.data ?? obj.trades ?? obj.results ?? obj.items;
+        if (Array.isArray(list)) {
+          candidateList = list;
+        }
+      }
 
-      // =========================================================================
-      // [PRODUCTION SWITCH] TO USE STRICT REAL BACKEND DATA (EVEN IF EMPTY []):
-      // Uncomment the single line below. If uncommented, an empty array [] from backend
-      // will NOT show dummy suggestions.
-      // =========================================================================
-      // return valid;
+      const valid: TradeSuggestion[] = candidateList
+        .map((rawItem, idx) => {
+          if (!rawItem || typeof rawItem !== "object") return null;
+          const item = rawItem as Record<string, unknown>;
+          const ticker = String(item.ticker ?? "").trim().toUpperCase();
+          if (!ticker) return null;
 
-      // Currently: if backend sends suggestions, use them; if empty array [], show dummy suggestions:
+          const rawQty = item.quantity;
+          const quantity =
+            typeof rawQty === "number"
+              ? rawQty
+              : parseFloat(String(rawQty ?? "0")) || 0;
+
+          const rawPrice = item.price;
+          const price =
+            typeof rawPrice === "number"
+              ? rawPrice
+              : parseFloat(String(rawPrice ?? "0")) || 0;
+
+          const rawAction = String(item.action ?? "buy").toLowerCase().trim();
+          const action: "buy" | "sell" = rawAction === "sell" ? "sell" : "buy";
+
+          return {
+            id: String(item.id ?? `sug_${ticker}_${idx}_${Date.now()}`),
+            ticker,
+            name: String(item.name ?? ticker),
+            action,
+            quantity,
+            price,
+            status: (item.status === "executed" ? "executed" : "pending") as "pending" | "executed",
+            executedAt: item.executedAt ? String(item.executedAt) : undefined,
+            is_executed: Boolean(item.is_executed || item.executed),
+            executed: Boolean(item.executed || item.is_executed),
+            predicted: Boolean(item.predicted ?? true),
+          };
+        })
+        .filter((item): item is TradeSuggestion => item !== null && item.quantity > 0 && item.price > 0);
+
       if (valid.length > 0) {
+        setCachedData(SUGGESTIONS_CACHE_KEY, valid);
         return valid;
       }
     }
-  } catch {
+  } catch (err) {
+    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
     // If backend endpoint is not ready or network fails, fallback to dummy suggestions
   }
 
@@ -227,7 +282,8 @@ export const SUGGESTIONS_EXECUTED_KEY = "strategy_suggestions_executed";
 export function getTodayDateString(): string {
   try {
     return new Date().toISOString().slice(0, 10);
-  } catch {
+  } catch (err) {
+    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
     return "today";
   }
 }
@@ -245,7 +301,8 @@ export function areSuggestionsExecutedToday(): boolean {
       localStorage.getItem(SUGGESTIONS_EXECUTED_KEY) ||
       sessionStorage.getItem(SUGGESTIONS_EXECUTED_KEY);
     return storedFlag === "true" || storedFlag === today;
-  } catch {
+  } catch (err) {
+    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
     return false;
   }
 }
@@ -257,7 +314,8 @@ export function markSuggestionsExecuted(): void {
     localStorage.setItem(SUGGESTIONS_EXECUTED_KEY, "true");
     sessionStorage.setItem(`${SUGGESTIONS_EXECUTED_KEY}_date`, today);
     sessionStorage.setItem(SUGGESTIONS_EXECUTED_KEY, "true");
-  } catch {
+  } catch (err) {
+    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
     // Ignore storage errors
   }
 }

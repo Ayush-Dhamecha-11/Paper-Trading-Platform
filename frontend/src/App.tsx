@@ -20,6 +20,9 @@ import {
   DASHBOARD_STOCKS_CACHE_KEY,
   HOLDINGS_CACHE_KEY,
   CAPITAL_CACHE_KEY,
+  PORTFOLIO_CACHE_KEY,
+  ANALYTICS_CACHE_KEY,
+  SUGGESTIONS_CACHE_KEY,
 } from "./utils/dataCache.ts";
 
 function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean }) {
@@ -43,7 +46,9 @@ function GlobalTradePanel() {
       sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
       sessionStorage.removeItem(DASHBOARD_STOCKS_CACHE_KEY);
       sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
-      sessionStorage.removeItem("analytics_data");
+      sessionStorage.removeItem(PORTFOLIO_CACHE_KEY);
+      sessionStorage.removeItem(ANALYTICS_CACHE_KEY);
+      sessionStorage.removeItem(SUGGESTIONS_CACHE_KEY);
     };
     window.addEventListener("trade-executed", handleDataBust);
     window.addEventListener("capital-updated", handleDataBust);

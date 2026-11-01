@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { applyTheme, getStoredTheme } from "../utils/themeUtils";
+import { fetchAnalyticsData, fetchPortfolioData } from "../utils/dashboardPrefetch";
 import "./Header.css";
 
 const navItems = [
@@ -78,6 +79,14 @@ export default function Header({
     navigate("/profile?section=support");
   };
 
+  const handleNavPrefetch = (path: string) => {
+    if (path === "/analytics") {
+      void fetchAnalyticsData();
+    } else if (path === "/portfolio") {
+      void fetchPortfolioData();
+    }
+  };
+
   const handleNavClick = (path: string) => {
     setMobileMenuOpen(false);
     navigate(path);
@@ -111,6 +120,8 @@ export default function Header({
               type="button"
               className={`header-tab ${location.pathname === item.path ? "active" : ""}`}
               onClick={() => handleNavClick(item.path)}
+              onMouseEnter={() => handleNavPrefetch(item.path)}
+              onFocus={() => handleNavPrefetch(item.path)}
             >
               {item.label}
             </button>
@@ -138,6 +149,8 @@ export default function Header({
                   type="button"
                   className={`mobile-menu-item ${location.pathname === item.path ? "active" : ""}`}
                   onClick={() => handleNavClick(item.path)}
+              onMouseEnter={() => handleNavPrefetch(item.path)}
+              onFocus={() => handleNavPrefetch(item.path)}
                 >
                   {item.label}
                 </button>

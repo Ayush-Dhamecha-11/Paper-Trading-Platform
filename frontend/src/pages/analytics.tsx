@@ -31,9 +31,12 @@ import {
 import {
   getCachedData,
   setCachedData,
+  ANALYTICS_CACHE_KEY,
+  PORTFOLIO_CACHE_KEY,
   DASHBOARD_SUMMARY_CACHE_KEY,
   HOLDINGS_CACHE_KEY,
 } from "../utils/dataCache";
+import { fetchAnalyticsData } from "../utils/dashboardPrefetch";
 import { useTradeModal } from "../context/TradeContext";
 import { ShoppingBag, ArrowRight } from "lucide-react";
 import "../pages_css/analytics.css";
@@ -42,27 +45,12 @@ const API_BASE_URL =
   import.meta.env.VITE_BACKEND_URL ||
   import.meta.env.VITE_API_BASE_URL ||
   "http://localhost:8000";
-const ANALYTICS_CACHE_KEY = "analytics_data";
-
 function getCachedAnalyticsData() {
   return getCachedData<AnalyticsData>(ANALYTICS_CACHE_KEY);
 }
 
 async function loadAnalyticsData(): Promise<AnalyticsData> {
-  console.debug("[AnalyticsPage] Loading analytics data", {
-    apiBaseUrl: API_BASE_URL,
-  });
-
-  const response = await authenticatedFetch(`${API_BASE_URL}/api/analytics`, {
-    credentials: "include",
-  });
-  logBackendResponse(response, "GET /api/analytics");
-
-  if (!response.ok) {
-    throw new Error("Analytics data failed to load.");
-  }
-
-  return (await response.json()) as AnalyticsData;
+  return fetchAnalyticsData();
 }
 
 function ChartRangeSwitcher({
@@ -104,11 +92,20 @@ function AnalyticsPage() {
   const [portfolioRange, setPortfolioRange] = useState<AnalyticsRangeKey>("6M");
   const [riskRange, setRiskRange] = useState<AnalyticsRangeKey>("6M");
   const [alphaRange, setAlphaRange] = useState<AnalyticsRangeKey>("6M");
-  const [analyticsStatus, setAnalyticsStatus] = useState<"loading" | "ready" | "empty" | "error">("loading");
-  const [analyticsRequestKey, setAnalyticsRequestKey] = useState(0);
+  const cachedAnalytics = getCachedAnalyticsData();
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData>(
-    () => getCachedAnalyticsData() ?? DUMMY_ANALYTICS_DATA
+    () => cachedAnalytics ?? DUMMY_ANALYTICS_DATA
   );
+  const [analyticsStatus, setAnalyticsStatus] = useState<"loading" | "ready" | "empty" | "error">(() => {
+    if (cachedAnalytics) {
+      const isEmpty =
+        (!cachedAnalytics.stockAllocation || cachedAnalytics.stockAllocation.length === 0) &&
+        (!cachedAnalytics.sectorAllocation || cachedAnalytics.sectorAllocation.length === 0);
+      return isEmpty ? "empty" : "ready";
+    }
+    return "loading";
+  });
+  const [analyticsRequestKey, setAnalyticsRequestKey] = useState(0);
   const benchmarkSeries = useMemo(
     () => analyticsData?.performanceSeries?.[benchmarkRange] ?? [],
     [analyticsData?.performanceSeries, benchmarkRange]
@@ -292,46 +289,53 @@ function AnalyticsPage() {
         });
       });
 
-    const refreshAnalyticsData = () => loadAnalyticsData()
-      .then((data) => {
-        if (!isMounted) {
-          return;
-        }
+    const refreshAnalyticsData = (showLoading = false) => {
+      if (showLoading) {
+        setAnalyticsStatus("loading");
+      }
+      return loadAnalyticsData()
+        .then((data) => {
+          if (!isMounted) {
+            return;
+          }
 
-        console.debug("[AnalyticsPage] Analytics data ready", data);
-        const isEmpty =
-          !data ||
-          ((!data.stockAllocation || data.stockAllocation.length === 0) &&
-           (!data.sectorAllocation || data.sectorAllocation.length === 0));
+          console.debug("[AnalyticsPage] Analytics data ready", data);
+          const isEmpty =
+            !data ||
+            ((!data.stockAllocation || data.stockAllocation.length === 0) &&
+             (!data.sectorAllocation || data.sectorAllocation.length === 0));
 
-        if (isEmpty) {
-          setAnalyticsStatus("empty");
-        } else {
-          setCachedData(ANALYTICS_CACHE_KEY, data);
-          setAnalyticsData(data);
-          setAnalyticsStatus("ready");
-        }
-      })
-      .catch((error) => {
-        if (!isMounted) {
-          return;
-        }
+          if (isEmpty) {
+            setAnalyticsStatus("empty");
+          } else {
+            setCachedData(ANALYTICS_CACHE_KEY, data);
+            setAnalyticsData(data);
+            setAnalyticsStatus("ready");
+          }
+        })
+        .catch((error) => {
+          if (!isMounted) {
+            return;
+          }
 
-        console.error("[AnalyticsPage] Analytics data failed to load", error);
-        if (cachedAnalyticsData && (cachedAnalyticsData.stockAllocation?.length > 0 || cachedAnalyticsData.sectorAllocation?.length > 0)) {
-          setAnalyticsStatus("ready");
-        } else {
-          setAnalyticsStatus("empty");
-        }
-      });
+          console.error("[AnalyticsPage] Analytics data failed to load", error);
+          const currentCached = getCachedAnalyticsData();
+          if (currentCached && ((currentCached.stockAllocation?.length ?? 0) > 0 || (currentCached.sectorAllocation?.length ?? 0) > 0)) {
+            setAnalyticsStatus("ready");
+          } else {
+            setAnalyticsStatus("empty");
+          }
+        });
+    };
 
     void refreshAnalyticsData();
 
     const handleDataRefresh = () => {
       sessionStorage.removeItem(ANALYTICS_CACHE_KEY);
+      sessionStorage.removeItem(PORTFOLIO_CACHE_KEY);
       sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
       sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
-      void refreshAnalyticsData();
+      void refreshAnalyticsData(false);
     };
     window.addEventListener("trade-executed", handleDataRefresh);
     window.addEventListener("capital-updated", handleDataRefresh);

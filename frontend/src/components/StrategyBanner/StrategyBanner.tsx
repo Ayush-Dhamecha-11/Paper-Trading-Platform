@@ -22,7 +22,7 @@ import {
 import type { Stock } from "../../data/stocksData";
 import { useTradeModal } from "../../context/TradeContext";
 import { getStoredUserInfo } from "../../utils/authUtils";
-import { getCachedData, HOLDINGS_CACHE_KEY } from "../../utils/dataCache";
+import { getCachedData, HOLDINGS_CACHE_KEY, SUGGESTIONS_CACHE_KEY } from "../../utils/dataCache";
 import { isMarketClosed } from "../../utils/marketUtils";
 import "./StrategyBanner.css";
 
@@ -32,8 +32,9 @@ type Props = {
 
 export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   const { openTradeWithBasket } = useTradeModal();
-  const [rawSuggestions, setRawSuggestions] = useState<TradeSuggestion[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedSuggestions = getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY);
+  const [rawSuggestions, setRawSuggestions] = useState<TradeSuggestion[]>(() => cachedSuggestions ?? []);
+  const [loading, setLoading] = useState(() => !cachedSuggestions || cachedSuggestions.length === 0);
   const [executing, setExecuting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [executionResult, setExecutionResult] = useState<string | null>(null);
@@ -69,7 +70,8 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
           }
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[StrategyBanner] Error fetching daily suggestions:", err);
         if (mounted) setLoading(false);
       });
     return () => {
