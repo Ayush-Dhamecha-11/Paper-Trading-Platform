@@ -1,6 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Eye, EyeOff } from "lucide-react";
+import PasswordField from "../components/PasswordField";
+import { showAuthNotice } from "../utils/authNotice";
+import {
+  logBackendResponse,
+  markUserLoggedIn,
+  setStoredAuthToken,
+} from "../utils/authUtils";
+import { warmDashboardData } from "../utils/dashboardPrefetch";
 import "../pages_css/login.css";
 
 type AuthMode = "login" | "signup";
@@ -10,81 +17,12 @@ type AuthPageProps = {
   readonly onAuthSuccess?: () => void;
 };
 
-type PasswordFieldProps = {
-  readonly id: string;
-  readonly label: string;
-  readonly placeholder: string;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly autoComplete: string;
-  readonly showPassword: boolean;
-  readonly onToggleShow: () => void;
-  readonly forgot?: boolean;
-  readonly onForgot?: () => void;
-};
-
-function PasswordField({
-  id,
-  label,
-  placeholder,
-  value,
-  onChange,
-  autoComplete,
-  showPassword,
-  onToggleShow,
-  forgot = false,
-  onForgot,
-}: PasswordFieldProps) {
-  return (
-    <div className="field">
-      <div className="password-label">
-        <label htmlFor={id}>{label}</label>
-
-        {forgot && (
-          <button
-            type="button"
-            className="forgot-button"
-            onClick={onForgot}
-          >
-            Forgot?
-          </button>
-        )}
-      </div>
-
-      <div className="password-input">
-        <input
-          id={id}
-          type={showPassword ? "text" : "password"}
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          autoComplete={autoComplete}
-        />
-
-        <button
-          type="button"
-          className="eye-button"
-          onClick={onToggleShow}
-          aria-label={showPassword ? "Hide password" : "Show password"}
-        >
-          {showPassword ? (
-            <EyeOff size={20} strokeWidth={2} />
-          ) : (
-            <Eye size={20} strokeWidth={2} />
-          )}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function AuthPage({
   initialMode = "login",
   onAuthSuccess,
 }: Readonly<AuthPageProps>) {
   const navigate = useNavigate();
   const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -92,8 +30,6 @@ export default function AuthPage({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState<{ text: string; type: "success" | "error" } | null>(null);
-  const noticeTimeoutRef = useRef<number | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const savedTheme = localStorage.getItem("Tradonova-theme");
 
@@ -112,66 +48,27 @@ export default function AuthPage({
   }, [theme]);
 
   useEffect(() => {
-    const savedNotice = window.sessionStorage.getItem("auth_notice");
+    const storedNotice = window.sessionStorage.getItem("auth_notice");
 
-    if (!savedNotice) {
+    if (!storedNotice) {
       return;
     }
 
+    window.sessionStorage.removeItem("auth_notice");
+
     try {
-      const parsedNotice = JSON.parse(savedNotice) as { text?: string; type?: "success" | "error" };
+      const notice = JSON.parse(storedNotice) as {
+        text?: string;
+        type?: "success" | "error";
+      };
 
-      if (parsedNotice.text) {
-        setNotice({
-          text: parsedNotice.text,
-          type: parsedNotice.type === "error" ? "error" : "success",
-        });
-
-        window.setTimeout(() => {
-          setNotice(null);
-          window.sessionStorage.removeItem("auth_notice");
-        }, 3000);
+      if (notice.text) {
+        showAuthNotice(notice.text, notice.type === "error" ? "error" : "success");
       }
     } catch {
-      window.sessionStorage.removeItem("auth_notice");
+      // Ignore malformed stored notices.
     }
   }, []);
-
-  const normalizeNoticeText = (text: string, type: "success" | "error" = "success") => {
-    const value = String(text ?? "").trim();
-
-    if (!value) {
-      return type === "success" ? "Action completed successfully." : "Something went wrong. Please try again.";
-    }
-
-    const cleaned = value
-      .replace(/auth_code\s*[:=][^,\n]+/gi, "")
-      .replace(/code_verifier\s*[:=][^,\n]+/gi, "")
-      .replace(/\s{2,}/g, " ")
-      .replace(/[,\s]+$/g, "")
-      .trim();
-
-    if (!cleaned || /auth_code|code_verifier/i.test(value)) {
-      return type === "success" ? "Google login successful." : "Authentication failed. Please try again.";
-    }
-
-    return cleaned;
-  };
-
-  const showNotice = (text: string, type: "success" | "error" = "success") => {
-    const nextText = normalizeNoticeText(text, type);
-    setNotice({ text: nextText, type });
-    window.sessionStorage.setItem("auth_notice", JSON.stringify({ text: nextText, type }));
-
-    if (noticeTimeoutRef.current) {
-      window.clearTimeout(noticeTimeoutRef.current);
-    }
-
-    noticeTimeoutRef.current = window.setTimeout(() => {
-      setNotice(null);
-      window.sessionStorage.removeItem("auth_notice");
-    }, 3000);
-  };
 
   const isLogin = mode === "login";
 
@@ -181,9 +78,13 @@ export default function AuthPage({
     "http://localhost:8000"
   ).replace(/\/$/, "");
 
-  const saveAuthToken = (token: string) => {
-    localStorage.setItem("auth_token", token);
-    window.dispatchEvent(new CustomEvent("auth-success"));
+  const saveAuthToken = (token: string, refreshToken?: string) => {
+    setStoredAuthToken(token, refreshToken);
+    onAuthSuccess?.();
+  };
+
+  const markLoggedIn = () => {
+    markUserLoggedIn();
     onAuthSuccess?.();
   };
 
@@ -209,6 +110,7 @@ export default function AuthPage({
 
     const requestOptions: RequestInit = {
       method,
+      credentials: "include",
       headers: {
         Accept: "application/json",
       },
@@ -232,6 +134,7 @@ export default function AuthPage({
       });
 
       return fetch(queryUrl.toString(), requestOptions).then(async (response) => {
+        logBackendResponse(response, `${method} ${normalizedEndpoint}`);
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
@@ -243,6 +146,7 @@ export default function AuthPage({
     }
 
     const response = await fetch(url, requestOptions);
+    logBackendResponse(response, `${method} ${normalizedEndpoint}`);
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
@@ -276,7 +180,7 @@ export default function AuthPage({
     return "";
   };
 
-  const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: { preventDefault: () => void }) => {
     e.preventDefault();
     setError("");
 
@@ -291,20 +195,19 @@ export default function AuthPage({
     try {
       const endpoint = isLogin ? "/auth/login" : "/auth/register";
       const response = await apiRequest(endpoint, "POST", {
-        ...(isLogin ? {} : { name }),
         email,
         password,
       });
 
-      const token = response.token || response.access_token || response.auth_token;
-
-      if (token) {
-        saveAuthToken(token);
-      }
-
       if (response.message) {
         setError("");
-        showNotice(response.message, "success");
+        showAuthNotice(response.message, "success");
+      }
+
+      if (isLogin) {
+        const warmPromise = warmDashboardData();
+        await Promise.race([warmPromise, new Promise((resolve) => setTimeout(resolve, 400))]);
+        markLoggedIn();
       }
 
       console.log(isLogin ? "Login:" : "Sign up:", response);
@@ -338,13 +241,14 @@ export default function AuthPage({
         return;
       }
 
-      const token = result?.token || result?.access_token || result?.auth_token;
-      if (token) {
-        saveAuthToken(token);
+      if (result?.token || result?.access_token || result?.auth_token) {
+        const token = result?.token || result?.access_token || result?.auth_token;
+        saveAuthToken(token, result?.refresh_token);
         return;
       }
 
-      throw new Error("Google authentication URL was not returned by the backend.");
+      markLoggedIn();
+      return;
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Google authentication failed.";
       setError(message);
@@ -433,14 +337,6 @@ export default function AuthPage({
           </div>
 
           <form onSubmit={handleSubmit} className="login-form">
-            {notice && (
-              <div className="toast-overlay">
-                <div className={`toast-message ${notice.type}`} role="status" aria-live="polite">
-                  {notice.text}
-                </div>
-              </div>
-            )}
-
             {/* {!isLogin && (
               <div className="field">
                 <label htmlFor="name">Name</label>

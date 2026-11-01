@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { showAppAlert } from "../utils/alertConfig";
+import { authenticatedFetch, logBackendResponse } from "../utils/authUtils";
 import "../pages_css/login.css";
 
 const backendBaseUrl = String(
@@ -12,28 +14,33 @@ export default function ForgotPasswordPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage(null);
 
     if (!email.trim()) {
-      setMessage({ text: "Please enter your email address.", type: "error" });
+      showAppAlert({
+        title: "Validation Error",
+        text: "Please enter your email address.",
+        type: "error",
+        timer: 2200,
+      });
       return;
     }
 
     setLoading(true);
 
     try {
-      const response = await fetch(`${backendBaseUrl}/auth/forgot-password`, {
+      const response = await authenticatedFetch(`${backendBaseUrl}/auth/forgot-password`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        body: JSON.stringify({ email }),
+        credentials: "include",
+        body: JSON.stringify({ email:email }),
       });
+      logBackendResponse(response, "POST /auth/forgot-password");
 
       const data = await response.json().catch(() => ({}));
 
@@ -42,7 +49,13 @@ export default function ForgotPasswordPage() {
       }
 
       const successText = data.message || "Password reset link sent to your email.";
-      setMessage({ text: successText, type: "success" });
+
+      showAppAlert({
+        title: "Success",
+        text: successText,
+        type: "success",
+        timer: 2400,
+      });
 
       window.sessionStorage.setItem(
         "auth_notice",
@@ -52,7 +65,12 @@ export default function ForgotPasswordPage() {
       setTimeout(() => navigate("/login", { replace: true }), 1200);
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : "Unable to send reset link.";
-      setMessage({ text: errMessage, type: "error" });
+      showAppAlert({
+        title: "Error",
+        text: errMessage,
+        type: "error",
+        timer: 2400,
+      });
     } finally {
       setLoading(false);
     }
@@ -112,18 +130,12 @@ export default function ForgotPasswordPage() {
               />
             </div>
 
-            {message && (
-              <div className={`toast-message ${message.type}`} role="status" aria-live="polite">
-                {message.text}
-              </div>
-            )}
-
             <button type="submit" className="login-button" disabled={loading}>
               {loading ? "Sending link..." : "Send reset link"}
             </button>
 
             <p className="signup-text">
-              Remember your password?
+              Remember your password?&nbsp;
               <button type="button" onClick={() => navigate("/login")}>
                 Login
               </button>
