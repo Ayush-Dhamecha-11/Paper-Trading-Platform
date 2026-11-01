@@ -1,0 +1,488 @@
+import { useEffect, useState, useMemo } from "react";
+import {
+  Zap,
+  TrendingUp,
+  TrendingDown,
+  CheckCircle2,
+  Sliders,
+  X,
+  ArrowRight,
+  ShieldCheck,
+  RefreshCw,
+  AlertTriangle,
+} from "lucide-react";
+import { formatCurrency } from "../../utils/formatters";
+import {
+  fetchDailySuggestions,
+  executeSuggestionsAsIs,
+  areSuggestionsExecutedToday,
+  markSuggestionsExecuted,
+  type TradeSuggestion,
+} from "../../utils/tradeApi";
+import type { Stock } from "../../data/stocksData";
+import { useTradeModal } from "../../context/TradeContext";
+import { getStoredUserInfo } from "../../utils/authUtils";
+import { getCachedData, HOLDINGS_CACHE_KEY, SUGGESTIONS_CACHE_KEY } from "../../utils/dataCache";
+import { isMarketClosed } from "../../utils/marketUtils";
+import "./StrategyBanner.css";
+
+type Props = {
+  stocks?: Stock[];
+};
+
+export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
+  const { openTradeWithBasket } = useTradeModal();
+  const cachedSuggestions = getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY);
+  const [rawSuggestions, setRawSuggestions] = useState<TradeSuggestion[]>(() => cachedSuggestions ?? []);
+  const [loading, setLoading] = useState(() => !cachedSuggestions || cachedSuggestions.length === 0);
+  const [executing, setExecuting] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [executionResult, setExecutionResult] = useState<string | null>(null);
+  const [isAlreadyExecuted, setIsAlreadyExecuted] = useState(() => areSuggestionsExecutedToday());
+
+  // Check user's auto_trade preference (stored in userInfo)
+  const isAutoTradeOn = useMemo(() => {
+    const info = getStoredUserInfo();
+    return Boolean(info?.auto_trade);
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    fetchDailySuggestions(stocks)
+      .then((data) => {
+        if (mounted) {
+          setRawSuggestions(data);
+          setLoading(false);
+          const allExecuted =
+            data.length > 0 &&
+            data.every(
+              (s) =>
+                s.status === "executed" ||
+                s.is_executed === true ||
+                s.executed === true ||
+                Boolean(s.executedAt)
+            );
+          if (allExecuted) {
+            setIsAlreadyExecuted(true);
+            markSuggestionsExecuted();
+          } else {
+            setIsAlreadyExecuted(false);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("[StrategyBanner] Error fetching daily suggestions:", err);
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [stocks]);
+
+  // Listen for suggestion executions across components (e.g. from TradeModal after customizing)
+  useEffect(() => {
+    const handleSuggestionsExecuted = () => {
+      setIsAlreadyExecuted(true);
+      setExecutionResult("All strategy suggestions executed successfully!");
+    };
+    window.addEventListener("suggestions-executed", handleSuggestionsExecuted);
+    return () => {
+      window.removeEventListener("suggestions-executed", handleSuggestionsExecuted);
+    };
+  }, []);
+
+  // Filter out any stocks with 0 quantity (backend might send 0 buy or 0 sell)
+  const validSuggestions = useMemo(() => {
+    return rawSuggestions.filter(
+      (s) => typeof s.quantity === "number" && s.quantity > 0
+    );
+  }, [rawSuggestions]);
+
+  // Compute financial totals with 20% short-selling margin freeze rule
+  const breakdown = useMemo(() => {
+    const cachedHoldings =
+      getCachedData<Array<{ ticker: string; quantity: number }>>(HOLDINGS_CACHE_KEY) ?? [];
+    const heldMap = new Map<string, number>();
+    cachedHoldings.forEach((h) => {
+      // Only positive held quantities represent owned shares that can be sold for proceeds
+      const heldQty = Math.max(0, h.quantity);
+      heldMap.set(
+        h.ticker.toUpperCase(),
+        (heldMap.get(h.ticker.toUpperCase()) ?? 0) + heldQty
+      );
+    });
+
+    let buyTotal = 0;
+    let regularSell = 0;
+    let shortNominal = 0;
+    let shortMarginToFreeze = 0;
+    const itemActionMap = new Map<string, "buy" | "sell" | "short">();
+
+    validSuggestions.forEach((item) => {
+      if (item.action === "buy") {
+        buyTotal += item.price * item.quantity;
+        itemActionMap.set(item.id, "buy");
+      } else {
+        const rawHeld = heldMap.get(item.ticker.toUpperCase()) ?? 0;
+        const currentHeld = Math.max(0, rawHeld);
+        const regQty = Math.min(item.quantity, currentHeld);
+        const sQty = Math.max(0, item.quantity - regQty);
+        heldMap.set(item.ticker.toUpperCase(), Math.max(0, currentHeld - regQty));
+
+        const regAmt = regQty * item.price;
+        const sNom = sQty * item.price;
+        const margin = sNom * 0.20; // 20% margin frozen from capital
+
+        regularSell += regAmt;
+        shortNominal += sNom;
+        shortMarginToFreeze += margin;
+        itemActionMap.set(item.id, currentHeld <= 0 ? "short" : "sell");
+      }
+    });
+
+    const netTradeCapital = buyTotal - regularSell;
+    const netRequired = Math.max(0, netTradeCapital + shortMarginToFreeze);
+
+    return {
+      buyTotal,
+      regularSell,
+      shortNominal,
+      shortMarginToFreeze,
+      netRequired,
+      itemActionMap,
+    };
+  }, [validSuggestions]);
+
+  const { buyTotal: totalBuy, netRequired } = breakdown;
+
+  const buyCount = useMemo(
+    () => validSuggestions.filter((s) => s.action === "buy").length,
+    [validSuggestions]
+  );
+  const sellCount = useMemo(
+    () => validSuggestions.filter((s) => s.action === "sell").length,
+    [validSuggestions]
+  );
+
+  if (dismissed || loading || validSuggestions.length === 0) {
+    return null;
+  }
+
+  // ── Mode 1: Auto-Trade is ON (Trades were executed overnight by backend) ──
+  if (isAutoTradeOn) {
+    return (
+      <section className="strategy-banner strategy-banner-auto-on" aria-label="Auto-Trade Activity">
+        <div className="strategy-banner-header">
+          <div className="strategy-badge-group">
+            <span className="strategy-pill strategy-pill-auto">
+              <Zap size={13} aria-hidden="true" />
+              Auto-Trade ON
+            </span>
+            <span className="strategy-status-text">
+              Overnight orders executed by backend ({validSuggestions.length} trades)
+            </span>
+          </div>
+          <button
+            type="button"
+            className="strategy-dismiss"
+            onClick={() => setDismissed(true)}
+            aria-label="Dismiss auto-trade summary"
+          >
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+
+        {/* Scrollable table of executed trades — 1 by 1 row */}
+        <div className="strategy-table-wrapper">
+          <table className="strategy-table">
+            <thead>
+              <tr>
+                <th className="sb-col-action">Action</th>
+                <th>Stock</th>
+                <th className="sb-col-right">Qty</th>
+                <th className="sb-col-right">Executed Price</th>
+                <th className="sb-col-right">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {validSuggestions.map((item) => {
+                const actionType = breakdown.itemActionMap.get(item.id) ?? item.action;
+                return (
+                  <tr key={item.id} className={`sb-row-${actionType}`}>
+                    <td className="sb-col-action">
+                      <span className={`strategy-action-tag tag-${actionType}`}>
+                        {actionType === "buy" ? "BOUGHT" : actionType === "short" ? "SHORT" : "SOLD"}
+                      </span>
+                    </td>
+                  <td>
+                    <div className="sb-stock-cell">
+                      <strong className="sb-ticker">{item.ticker}</strong>
+                      <span className="sb-name">{item.name}</span>
+                    </div>
+                  </td>
+                  <td className="sb-col-right">{item.quantity}</td>
+                  <td className="sb-col-right">{formatCurrency(item.price)}</td>
+                  <td className="sb-col-right sb-col-total">
+                    {formatCurrency(item.price * item.quantity)}
+                  </td>
+                </tr>
+              );
+            })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="strategy-footer-note">
+          <ShieldCheck size={15} aria-hidden="true" />
+          <span>All positions and capital were updated automatically. View in Portfolio.</span>
+        </div>
+      </section>
+    );
+  }
+
+  const marketClosed = isMarketClosed(stocks);
+
+  const handleExecuteAsIs = async () => {
+    if (marketClosed) {
+      setExecutionResult("Cannot execute suggestions: The stock market is currently closed.");
+      return;
+    }
+    setExecuting(true);
+    try {
+      await executeSuggestionsAsIs(validSuggestions);
+      markSuggestionsExecuted();
+      setIsAlreadyExecuted(true);
+      setExecutionResult("All strategy suggestions executed successfully!");
+      window.dispatchEvent(new CustomEvent("suggestions-executed"));
+      window.dispatchEvent(new CustomEvent("trade-executed"));
+    } catch (err) {
+      setExecutionResult(err instanceof Error ? err.message : "Execution failed");
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const handleCustomize = () => {
+    const isAlreadyDone = isAlreadyExecuted || areSuggestionsExecutedToday();
+    openTradeWithBasket(
+      validSuggestions.map((s) => ({
+        ticker: s.ticker,
+        name: s.name,
+        price: s.price,
+        action: s.action,
+        quantity: s.quantity,
+        predicted: !isAlreadyDone,
+      }))
+    );
+  };
+
+  return (
+    <section className="strategy-banner strategy-banner-pending" aria-label="Today's Strategy Suggestions">
+      <div className="strategy-banner-header">
+        <div className="strategy-title-group">
+          <div className="strategy-tag-row">
+            <span
+              className={`strategy-pill ${
+                isAlreadyExecuted ? "strategy-pill-executed" : "strategy-pill-suggestion"
+              }`}
+            >
+              {isAlreadyExecuted ? (
+                <>
+                  <CheckCircle2 size={13} aria-hidden="true" />
+                  Executed
+                </>
+              ) : (
+                <>
+                  <Zap size={13} aria-hidden="true" />
+                  Daily Strategy Desk
+                </>
+              )}
+            </span>
+            <span className="strategy-mode-indicator">
+              {isAlreadyExecuted ? "Strategy Executed for Today" : "Auto-Trade: OFF"}
+            </span>
+          </div>
+          <h3 className="strategy-heading">
+            Today&apos;s Trade Suggestions ({validSuggestions.length} stocks: {buyCount} buy, {sellCount} sell)
+          </h3>
+          <p className="strategy-desc">
+            {isAlreadyExecuted
+              ? "Today's recommended algorithm trades have been executed. Positions are updated in your portfolio."
+              : "Algorithm-generated trade recommendations. Execute directly as-is or customize quantities in your trade basket."}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          className="strategy-dismiss"
+          onClick={() => setDismissed(true)}
+          aria-label="Dismiss strategy suggestions"
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="strategy-banner-content">
+        {/* Scrollable table of suggestions — 1 by 1 row just like StockTable */}
+        <div className="strategy-table-wrapper">
+          <table className="strategy-table">
+            <thead>
+              <tr>
+                <th className="sb-col-action">Action</th>
+                <th>Stock</th>
+                <th className="sb-col-right">Suggested Qty</th>
+                <th className="sb-col-right">Market Price</th>
+                <th className="sb-col-right">Estimated Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {validSuggestions.map((item) => {
+                const subtotal = item.price * item.quantity;
+                const isItemDone =
+                  isAlreadyExecuted ||
+                  item.status === "executed" ||
+                  item.is_executed === true ||
+                  item.executed === true ||
+                  Boolean(item.executedAt);
+
+                const actionType = breakdown.itemActionMap.get(item.id) ?? item.action;
+
+                return (
+                  <tr key={item.id} className={`sb-row-${actionType}`}>
+                    <td className="sb-col-action">
+                      <span
+                        className={`strategy-action-tag tag-${actionType} ${
+                          isItemDone ? "tag-executed" : ""
+                        }`}
+                      >
+                        {isItemDone ? (
+                          <>
+                            <CheckCircle2 size={12} aria-hidden="true" />
+                            {actionType === "buy" ? "BUY" : actionType === "short" ? "SHORT" : "SELL"}
+                          </>
+                        ) : actionType === "buy" ? (
+                          <>
+                            <TrendingUp size={12} aria-hidden="true" /> BUY
+                          </>
+                        ) : actionType === "short" ? (
+                          <>
+                            <TrendingDown size={12} aria-hidden="true" /> SHORT
+                          </>
+                        ) : (
+                          <>
+                            <TrendingDown size={12} aria-hidden="true" /> SELL
+                          </>
+                        )}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="sb-stock-cell">
+                        <strong className="sb-ticker">{item.ticker}</strong>
+                        <span className="sb-name">{item.name}</span>
+                      </div>
+                    </td>
+                    <td className="sb-col-right">{item.quantity}</td>
+                    <td className="sb-col-right">{formatCurrency(item.price)}</td>
+                    <td className="sb-col-right sb-col-total">
+                      {formatCurrency(subtotal)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Financial Summary & Actions */}
+        <div className="strategy-action-bar">
+          <div className="strategy-net-preview">
+            <span className="strategy-net-label">Strategy Net Impact:</span>
+            <strong className="strategy-net-val">
+              {netRequired >= 0
+                ? `${formatCurrency(netRequired)} required`
+                : `+${formatCurrency(Math.abs(netRequired))} proceeds`}
+            </strong>
+            <span className="strategy-net-subtext">
+              Buys: {formatCurrency(totalBuy)} · Sells: {formatCurrency(breakdown.regularSell)}
+              {breakdown.shortMarginToFreeze > 0 && (
+                <> · Margin Frozen (20%): {formatCurrency(breakdown.shortMarginToFreeze)}</>
+              )}
+            </span>
+          </div>
+
+          <div className="strategy-btn-group">
+            {!isAlreadyExecuted ? (
+              <>
+                {marketClosed && (
+                  <span className="strategy-market-closed-warning" title="Stock market is currently closed">
+                    <AlertTriangle size={13} aria-hidden="true" />
+                    <span>Market Closed</span>
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  className="strategy-btn-customize"
+                  onClick={handleCustomize}
+                  title="Customize quantities, add/remove stocks in the trade basket"
+                >
+                  <Sliders size={14} aria-hidden="true" />
+                  <span>Customize &amp; Edit</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="strategy-btn-execute"
+                  onClick={() => void handleExecuteAsIs()}
+                  disabled={executing || marketClosed}
+                  title={
+                    marketClosed
+                      ? "Cannot execute suggestions because the stock market is closed"
+                      : "Execute all suggestions directly as recommended"
+                  }
+                >
+                  {executing ? (
+                    <>
+                      <RefreshCw size={14} className="strategy-spin" aria-hidden="true" />
+                      <span>Executing…</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Execute As-Is</span>
+                      <ArrowRight size={14} aria-hidden="true" />
+                    </>
+                  )}
+                </button>
+              </>
+            ) : (
+              <div className="strategy-executed-badge" role="status">
+                <CheckCircle2 size={15} aria-hidden="true" />
+                <span>Already Executed</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {executionResult && (
+          <div
+            className={`strategy-result-banner ${
+              executionResult.toLowerCase().includes("closed") ||
+              executionResult.toLowerCase().includes("failed")
+                ? "result-banner-error"
+                : ""
+            }`}
+            role="status"
+          >
+            {executionResult.toLowerCase().includes("closed") ||
+            executionResult.toLowerCase().includes("failed") ? (
+              <AlertTriangle size={16} aria-hidden="true" />
+            ) : (
+              <CheckCircle2 size={16} aria-hidden="true" />
+            )}
+            <span>{executionResult}</span>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
