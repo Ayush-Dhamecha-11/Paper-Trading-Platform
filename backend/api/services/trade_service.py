@@ -22,6 +22,7 @@ Important accounting rules:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -542,3 +543,156 @@ def mark_to_market_all_shorts(db: Session, as_of: Optional[date] = None) -> int:
 
     db.commit()
     return force_closed_count
+
+
+@dataclass(frozen=True)
+class SelfFinancingTrade:
+    symbol: str
+    action: str  # "buy" or "sell"
+    quantity: Decimal
+    price: Decimal
+    target_qty: Decimal
+    current_qty: Decimal
+    priority: int  # 1: Long sells, 2: Short covers, 3: Long buys, 4: Short sells
+
+
+def calculate_self_financing_rebalance(
+    current_positions: Mapping[str, Decimal | float],
+    account_equity: Decimal | float,
+    symbol_weights: Mapping[str, Decimal | float],
+    prices: Mapping[str, Decimal | float],
+    *,
+    is_portfolio_weights: bool = True,
+) -> list[SelfFinancingTrade]:
+    """
+    Calculate the exact single-trade batch required to transition a portfolio to predicted weights.
+
+    Mathematical & Operational Rules:
+    1. Capital Availability: Liquidation of current portfolio to zero produces available
+       cash capital equal to `account_equity`.
+    2. Integer Floor Allocation: Shares can only be traded in integer units. Using `floor`
+       ensures total allocated capital <= account_equity, preventing negative cash balances.
+    3. Short Selling Support: Supports negative target weights (short targets) and covers
+       existing short positions cleanly.
+    4. Single-Trade Execution: Computes the net delta (target_qty - current_qty) per stock.
+    5. Self-Financing Execution Ordering:
+       - Priority 1: Long sells (adds sale proceeds to spendable cash)
+       - Priority 2: Short covers (releases margin & realized P&L to cash)
+       - Priority 3: Long buys (consumes cash from proceeds)
+       - Priority 4: Short sells (locks 30% margin from remaining cash)
+    """
+    equity = max(ZERO, D(account_equity))
+    all_symbols = sorted(set(list(current_positions.keys()) + list(symbol_weights.keys())))
+
+    trades: list[SelfFinancingTrade] = []
+
+    print(
+        f"\n{'='*120}\n"
+        f" [PREDICTION REBALANCE ANALYSIS] Equity: ₹{float(equity):,.2f} | Total Evaluated Stocks: {len(all_symbols)}\n"
+        f"{'-'*120}",
+        flush=True,
+    )
+
+    skipped_count = 0
+
+    for sym in all_symbols:
+        curr_qty = D(current_positions.get(sym, ZERO))
+        price = D(prices.get(sym, ZERO))
+        weight = D(symbol_weights.get(sym, ZERO))
+
+        if price <= ZERO:
+            print(
+                f"  {sym:<10} | Price: ₹{float(price):>9.2f} | Weight: {float(weight):>9.6f} | "
+                f"SKIPPED: Invalid/Zero market price",
+                flush=True,
+            )
+            skipped_count += 1
+            continue
+
+        if is_portfolio_weights:
+            if equity <= ZERO:
+                raw_target_qty = ZERO
+                target_qty = ZERO
+            elif weight > ZERO:
+                raw_target_qty = (equity * weight) / price
+                target_qty = Decimal(math.floor(float(raw_target_qty)))
+            elif weight < ZERO:
+                raw_target_qty = -((equity * abs(weight)) / price)
+                target_qty = -Decimal(math.floor(float(abs(raw_target_qty))))
+            else:
+                raw_target_qty = ZERO
+                target_qty = ZERO
+        else:
+            raw_target_qty = weight
+            if weight >= ZERO:
+                target_qty = Decimal(math.floor(float(weight)))
+            else:
+                target_qty = -Decimal(math.floor(float(abs(weight))))
+
+        raw_diff = raw_target_qty - curr_qty
+        diff = target_qty - curr_qty
+        rounded_diff = round(diff)
+
+        alloc_val = float(equity * abs(weight)) if is_portfolio_weights else 0.0
+
+        if rounded_diff == 0:
+            skipped_count += 1
+            if alloc_val > 0 and float(price) > alloc_val:
+                status_msg = (
+                    f"SKIPPED (raw diff={float(raw_diff):+.4f} -> floored to 0 shares; "
+                    f"price ₹{float(price):,.2f} > alloc ₹{alloc_val:,.2f})"
+                )
+            else:
+                status_msg = f"SKIPPED (raw diff={float(raw_diff):+.4f} -> diff=0, no change needed)"
+
+            print(
+                f"  {sym:<10} | Price: ₹{float(price):>9.2f} | Weight: {float(weight):>9.6f} | "
+                f"Alloc: ₹{alloc_val:>8.2f} | Curr: {float(curr_qty):>6.1f} | "
+                f"Raw Target: {float(raw_target_qty):>7.4f} | Floored: {float(target_qty):>4.0f} | {status_msg}",
+                flush=True,
+            )
+            continue
+
+        if rounded_diff > 0:
+            action = "buy"
+            trade_qty = Decimal(rounded_diff)
+            # If current position is short, buy covers it first (releases margin + P&L)
+            priority = 2 if curr_qty < ZERO else 3
+        else:
+            action = "sell"
+            trade_qty = Decimal(abs(rounded_diff))
+            # If current position is long, sell liquidates it first (adds sale proceeds)
+            priority = 1 if curr_qty > ZERO else 4
+
+        status_msg = f"TRADE: {action.upper()} {trade_qty} shares (raw diff={float(raw_diff):+.4f})"
+
+        print(
+            f"  {sym:<10} | Price: ₹{float(price):>9.2f} | Weight: {float(weight):>9.6f} | "
+            f"Alloc: ₹{alloc_val:>8.2f} | Curr: {float(curr_qty):>6.1f} | "
+            f"Raw Target: {float(raw_target_qty):>7.4f} | Floored: {float(target_qty):>4.0f} | {status_msg}",
+            flush=True,
+        )
+
+        trades.append(
+            SelfFinancingTrade(
+                symbol=sym,
+                action=action,
+                quantity=trade_qty,
+                price=price,
+                target_qty=target_qty,
+                current_qty=curr_qty,
+                priority=priority,
+            )
+        )
+
+    # Sort strictly by priority (1 -> 2 -> 3 -> 4), then by symbol
+    trades.sort(key=lambda t: (t.priority, t.symbol))
+
+    print(
+        f"{'-'*120}\n"
+        f" [PREDICTION SUMMARY] Trades Planned: {len(trades)} | Skipped: {skipped_count} (out of {len(all_symbols)} stocks)\n"
+        f"{'='*120}\n",
+        flush=True,
+    )
+    return trades
+

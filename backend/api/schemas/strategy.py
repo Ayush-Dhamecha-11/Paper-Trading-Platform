@@ -9,5 +9,6 @@ class TradeSuggestionOut(BaseModel):
     action: Literal["buy", "sell"]
     quantity: float
     price: float
+    weight: float = 0.0
     status: Literal["pending", "executed"]
     executedAt: Optional[str] = None
