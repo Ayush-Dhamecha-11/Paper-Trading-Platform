@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from api.routers import analytics, auth, dashboard, portfolio, profile, strategy, trade
 from jobs.auto_trade_cron import start_auto_trade_scheduler, stop_auto_trade_scheduler
-
+import os
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -20,7 +20,7 @@ app = FastAPI(title="Paper Trading Platform", lifespan=lifespan)
 
 # CORS settings
 origins = [
-    "http://localhost:5173",
+    os.getenv("FRONTEND_URL"),
 ]
 
 app.add_middleware(
