@@ -44,4 +44,5 @@ class PortfolioData(BaseModel):
     summary: PortfolioSummaryOut
     performanceSeries: list[TimeSeriesPointOut]
     sectorAllocation: list[AllocationPointOut]
+    stockAllocation: list[AllocationPointOut]
     holdings: list[PortfolioHoldingOut]

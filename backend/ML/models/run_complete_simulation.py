@@ -1,4 +1,5 @@
 import sys
+import torch
 import logging
 from pathlib import Path
 import pandas as pd
@@ -15,9 +16,9 @@ if str(ml_dir) not in sys.path:
 
 from data_loader import DataLoader
 from train import RollingTrainer, ModelConfig
-#from test_oos import OOSTester
+from test_oos import OOSTester
 #from signature_prep import build_signature_features, plot_signature_similarity
-#from show_results import show_all_oos_final_results, plot_factor_portfolio_weights, plot_beta_loading, Color_maps
+from show_results import show_all_oos_final_results
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,31 +29,33 @@ logger = logging.getLogger(__name__)
 
 # Model parameters to configure
 data_dir = "../data"
-years_to_train = 8
-years_to_validate = 2
+years_to_train = 10
+years_to_validate = 3
 years_to_test = 1
-K_list = [3]
+K_list = [5]
 md = ["learnable"]  # ["learnable", "pca"]
+proj_dim = 32
 hidden_projection_dim = 32
-lookback_length = 40
+lookback_length = 50
 epoch = 30
-learning_rate = 0.005
+learning_rate = 0.008
 weight_decay = 0.002
 lambda_var_coeff = 0.0
 lambda_ridge = 0.01
 lambda_squash = 0.001
-early_stop_patience = 6
-dev = "cpu"
+early_stop_patience = 8
+dev = "auto"
 
 # Load the data
-loader = DataLoader(train_years=5, val_years=2)
+loader = DataLoader(train_years=years_to_train, val_years=years_to_validate)
 loader.describe()
 
 X, R, dates, symbols = loader.get_tensors()
 splits = loader.get_split()
+_, _, _, _, X_test, R_test = loader.get_window_tensors(splits)
+
 
 logger.info(f"X shape: {tuple(X.shape)}  R shape: {tuple(R.shape)}")
-logger.info(f"Rolling windows: {len(splits)}")
 
 # Replace firm characteristics with signature features
 syms = []
@@ -71,9 +74,9 @@ for ele in symbols:
 #sector_map = metadata.set_index('symbol')['sector'].to_dict()
 
 # store final metrics of each tested model
-#final_content = {}
-#out_path = Path(f"../result_figures")
-#out_path.mkdir(parents=True, exist_ok=True)
+final_content = {}
+out_path = Path(f"../result_figures")
+out_path.mkdir(parents=True, exist_ok=True)
 
 # Training loop
 
@@ -82,7 +85,7 @@ for k in K_list:
         # Configure and run trainer
         config = ModelConfig(
             K = k,
-            d = hidden_projection_dim,
+            d = proj_dim,
             s = lookback_length,
             epochs = epoch,
             lr = learning_rate,
@@ -96,15 +99,15 @@ for k in K_list:
             device=dev,
             mode=mdd,
         )
-        
+
         #Training
-        trainer = RollingTrainer(config)
-        trainer.run_train(X, R, splits, dates, symbols)
-        #tester = OOSTester(config)
+        #trainer = RollingTrainer(config)
+        #trainer.run_train(X, R, splits, dates, symbols)
+        tester = OOSTester(config)
 
         # Testing
-        #results = tester.run_test(X, R, splits, dates, symbols)
-        #final_content[f"{k}_{mdd}"] = results
+        results = tester.run_test(X_test, R_test, splits, dates, symbols, config)
+        final_content[f"{k}_{mdd}"] = results
 
         # Print summary table
         """print("\n" + "-" * 65)
@@ -167,4 +170,4 @@ for k in K_list:
         print(f"Saved test figure (K={k}) to {out_path}")"""
 
 
-#show_all_oos_final_results(final_content)
+show_all_oos_final_results(final_content)

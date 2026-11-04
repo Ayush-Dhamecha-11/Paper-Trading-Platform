@@ -48,6 +48,8 @@ def get_portfolio(
 ):
     portfolio = get_or_create_portfolio(db, user["id"])
     state = build_portfolio_state(db, portfolio)
+    positions, meta, prices = svc.load_open_positions_with_meta(db, portfolio.user_id)
+    allocation = svc.build_allocation_charts(positions, meta, prices)
 
     snapshots = svc.load_snapshots(db, portfolio.user_id)
 
@@ -70,6 +72,7 @@ def get_portfolio(
         summary=summary,
         performanceSeries=performance_series,
         sectorAllocation=[AllocationPointOut(**item) for item in sector_allocation],
+        stockAllocation=allocation["stockAllocation"],
         holdings=holdings,
     )
 

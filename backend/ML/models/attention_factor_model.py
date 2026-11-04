@@ -124,6 +124,9 @@ class LongConv(nn.Module):
         # Dropout
         self.dropout = nn.Dropout(p=dropout)
 
+        # activation
+        self.activation = nn.GELU()
+
         # Layer norm for training stability
         self.layer_norm = nn.LayerNorm(d_h)
 
@@ -247,6 +250,8 @@ class LongConv(nn.Module):
 
         y = y_conv + y_skip # (N, d_hidden, s)
 
+        #y = self.dropout(self.activation(y))
+
         # Take last timestep
         y_last = y[:,:,-1] # (N, d_hidden)
 
@@ -311,6 +316,8 @@ class AttentionFactorModel(nn.Module):
         # K query vectors, each query has dimesion d
         # multiplication with it gives contribution of each stock to each factor
         self.Q = nn.Parameter(torch.randn(K, d) * (1.0 / math.sqrt(d)))
+        #self.a = nn.Parameter(torch.rand(1)*10) # coefficient for mean_ret
+        #self.b = nn.Parameter(torch.rand(1)) # coefficient for std_ret
 
         # Learnable parameter 3 -- LongConv sequence model
         # Takes (N, s) residual history, gives (N,) portfolio weights
@@ -514,7 +521,6 @@ class AttentionFactorModel(nn.Module):
                                     (used in the loss function)
 
         """
-
         if mode=="learnable":
             # Embed characteristics
             X_tilde = self.embed_characteristics(X_prev) # (N, d)
@@ -533,15 +539,17 @@ class AttentionFactorModel(nn.Module):
 
         # Residuals
         eps_t = self.compute_residuals(R_curr, beta, F_t) # (N,)
-
+        
         # LongConv -> residual-space portfolio weights
         omega_port = self.longconv(eps_hist) # (N,)
 
         # Mapping to asset space
         omega_eps = self.compute_residual_projection_mat(beta, omega_F) # (N, N)
         omega_t = self.compute_portfolio_weights(omega_eps, omega_port) # (N,)
+        #print(f"omega_t:  {omega_t}\n")
         l1 = omega_t.abs().sum()
         omega_t = omega_t / (l1 + 1e-8)
+        print(f"omega_t:  {omega_port}\n")
 
         # Gross profit return
         R_port_gross = torch.dot(R_curr, omega_t) # scalar
@@ -618,7 +626,8 @@ class AttentionFactorModel(nn.Module):
 
             X_prev = X[t-1] # (N, M)
             R_curr = R[t] # (N,)
-
+            #print(f"X_prev:  {(X_prev.isnan()).sum()}\n")
+            #print(f"R_curr:  {(R_curr.isnan()).sum()}\n")
             if t < self.s:
                 # Accumulate residuals
                 with torch.no_grad():
@@ -738,7 +747,7 @@ class AttentionFactorModel(nn.Module):
         mean_exp_var = torch.mean(1.0 - unexplained)
 
         # Combined loss (negative because we minimise)
-        loss = -(0.5*mean_ret_rf - 0.05*std_ret_rf + lambda_var*mean_exp_var)
+        loss = -(0.5*mean_ret_rf - 0.2*std_ret_rf + 0.0*mean_exp_var)
 
         # Diagnostics dict for logging
         info = {

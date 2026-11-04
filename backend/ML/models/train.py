@@ -89,7 +89,7 @@ class ModelConfig:
     d_hidden_conv: int = 32
     lambda_ridge: float = 1e-2
     lambda_squash: float = 0.001
-    dropout: float = 0.1
+    dropout: float = 0.25
 
     # Training
     epochs: int = 30
@@ -351,7 +351,7 @@ class RollingTrainer:
             if val_loss < best_val_loss - self.cfg.min_delta:
                 best_val_loss = val_loss
                 best_epoch = epoch
-                self.save_checkpoints(model, window_num, epoch, val_loss)
+                self.save_checkpoints(model, epoch, val_loss)
 
             # Logging every epochs
             logger.info(
@@ -489,7 +489,6 @@ class RollingTrainer:
     def save_checkpoints(
         self,
         model_or_state: Union[AttentionFactorModel, dict],
-        window_num: int,
         epoch: Optional[int] = None,
         val_loss: Optional[float] = None,
     ) -> None:
@@ -498,11 +497,11 @@ class RollingTrainer:
         Instead of accumulating increasing numbers of local files on disk,
         it pushes directly to the cloud Hugging Face repository.
         """
-        filename = f"K{self.cfg.K}_checkpoint_window_{window_num:02d}.pt"
+        filename = f"K{self.cfg.K}_checkpoint_{self.cfg.s}_try.pt"
         commit_msg = (
-            f"Best checkpoint window {window_num:02d} (K={self.cfg.K}, epoch={epoch}, val_loss={val_loss:.4f})"
+            f"Best checkpoint (K={self.cfg.K}, epoch={epoch}, val_loss={val_loss:.4f})"
             if val_loss is not None
-            else f"Checkpoint window {window_num:02d} (K={self.cfg.K})"
+            else f"Checkpoint (K={self.cfg.K})"
         )
         try:
             upload_checkpoint(

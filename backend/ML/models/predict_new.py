@@ -406,7 +406,7 @@ def predict_next_day_portfolio(target_date: date | None = None) -> dict[str, Any
                     mode=mdd,
                 )
 
-                checkpoint_filename = f"K{k}_checkpoint_window_01.pt"
+                checkpoint_filename = f"K{k}_checkpoint_{lookback_length}.pt"
                 
                 model = _load_model(
                     repo_id=repo_id,
