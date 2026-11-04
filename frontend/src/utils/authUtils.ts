@@ -3,6 +3,7 @@ const AUTH_SESSION_KEY = "auth_session";
 const REFRESH_TOKEN_KEY = "refresh_token";
 const USER_INFO_KEY = "user_info";
 let refreshRequest: Promise<boolean> | null = null;
+let requestCounter = 0;
 
 export type StoredUserInfo = {
   name?: string;
@@ -18,15 +19,58 @@ export const getBackendBaseUrl = () =>
       "http://localhost:8000"
   ).replace(/\/$/, "");
 
-export const logBackendResponse = (response: Response, requestName: string) => {
-  try { if (!response.bodyUsed) { void response.clone().text().then((body) => {
-    console.groupCollapsed(`[Backend response] ${requestName}`);
-    console.log("URL:", response.url);
-    console.log("Status:", response.status, response.statusText);
-    console.log("Headers:", Object.fromEntries(response.headers.entries()));
-    console.log("Body:", body);
+export const logBackendRequest = (
+  method: string,
+  url: string,
+  reqId?: number,
+  customName?: string
+) => {
+  const timestamp = new Date().toLocaleTimeString();
+  const idStr = typeof reqId === "number" ? `#${reqId} ` : "";
+  const label = customName ? `${method} ${url} (${customName})` : `${method} ${url}`;
+
+  console.log(
+    `%c[Backend request ${idStr}] 🚀 ${label} | Sent at ${timestamp}`,
+    "color: #00d2ff; font-weight: bold; background: rgba(0, 210, 255, 0.08); padding: 2px 6px; border-radius: 4px;"
+  );
+};
+
+export const logBackendResponse = (
+  response: Response,
+  requestName: string,
+  elapsedMs?: number,
+  reqId?: number
+) => {
+  try {
+    const idStr = typeof reqId === "number" ? `#${reqId} ` : "";
+    const durationText = typeof elapsedMs === "number" ? ` in ${elapsedMs}ms (${(elapsedMs / 1000).toFixed(2)}s)` : "";
+    const isOk = response.ok;
+    const badgeColor = isOk ? "#20d89b" : response.status === 401 ? "#f59e0b" : "#ff5e6d";
+    const bg = isOk ? "rgba(32, 216, 155, 0.08)" : "rgba(255, 94, 109, 0.08)";
+
+    console.groupCollapsed(
+      `%c[Backend response ${idStr}] 🏁 ${requestName} → ${response.status} ${response.statusText}${durationText}`,
+      `color: ${badgeColor}; font-weight: bold; background: ${bg}; padding: 2px 6px; border-radius: 4px;`
+    );
+    if (typeof elapsedMs === "number") {
+      console.log(`⏱️ Duration: ${elapsedMs}ms (${(elapsedMs / 1000).toFixed(2)}s)`);
+    }
+    console.log("📍 URL:", response.url);
+    console.log("📊 Status:", response.status, response.statusText);
+    console.log("🧾 Headers:", Object.fromEntries(response.headers.entries()));
+
+    if (!response.bodyUsed) {
+      void response.clone().text().then((body) => {
+        try {
+          const parsed = JSON.parse(body);
+          console.log("📦 Body (JSON):", parsed);
+        } catch {
+          console.log("📦 Body (text):", body.length > 500 ? body.slice(0, 500) + "..." : body);
+        }
+      }).catch(() => {});
+    }
     console.groupEnd();
-    }).catch(() => {}); } } catch {}
+  } catch {}
 };
 
 const refreshSession = async () => {
@@ -34,16 +78,26 @@ const refreshSession = async () => {
     return refreshRequest;
   }
 
-  refreshRequest = fetch(`${getBackendBaseUrl()}/auth/refresh`, {
+  const reqId = ++requestCounter;
+  const refreshUrl = `${getBackendBaseUrl()}/auth/refresh`;
+  logBackendRequest("POST", refreshUrl, reqId, "Session Refresh");
+  const startTime = performance.now();
+
+  refreshRequest = fetch(refreshUrl, {
     method: "POST",
     credentials: "include",
     headers: { Accept: "application/json" },
   })
     .then((response) => {
-      logBackendResponse(response, "POST /auth/refresh");
+      const elapsedMs = Math.round(performance.now() - startTime);
+      logBackendResponse(response, "POST /auth/refresh", elapsedMs, reqId);
       return response.ok;
     })
-    .catch(() => false)
+    .catch((err) => {
+      const elapsedMs = Math.round(performance.now() - startTime);
+      console.error(`[Backend request #${reqId} FAILED] ❌ POST /auth/refresh after ${elapsedMs}ms:`, err);
+      return false;
+    })
     .finally(() => {
       refreshRequest = null;
     });
@@ -61,16 +115,57 @@ const redirectAfterSessionExpiry = async () => {
 export const authenticatedFetch = async (
   input: RequestInfo | URL,
   init: RequestInit = {},
+  requestLabel?: string
 ) => {
+  const reqId = ++requestCounter;
+  const method = (init.method || "GET").toUpperCase();
+  const rawUrl =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+      ? input.toString()
+      : input.url;
+
+  let friendlyName = requestLabel;
+  if (!friendlyName) {
+    try {
+      const parsed = new URL(rawUrl, window.location.origin);
+      friendlyName = `${method} ${parsed.pathname}${parsed.search}`;
+    } catch {
+      friendlyName = `${method} ${rawUrl}`;
+    }
+  }
+
+  logBackendRequest(method, rawUrl, reqId, friendlyName);
+  const startTime = performance.now();
+
   const requestInit = { ...init, credentials: "include" as RequestCredentials };
-  const response = await fetch(input, requestInit);
+  let response: Response;
+  try {
+    response = await fetch(input, requestInit);
+  } catch (error) {
+    const elapsedMs = Math.round(performance.now() - startTime);
+    console.error(
+      `%c[Backend request #${reqId} FAILED] ❌ ${friendlyName} after ${elapsedMs}ms`,
+      "color: #ff5e6d; font-weight: bold;",
+      error
+    );
+    throw error;
+  }
+
+  const elapsedMs = Math.round(performance.now() - startTime);
+  logBackendResponse(response, friendlyName, elapsedMs, reqId);
 
   if (response.status !== 401) {
     return response;
   }
 
   if (await refreshSession()) {
+    console.log(`[Backend request #${reqId}] 🔄 Retrying ${friendlyName} after token refresh...`);
+    const retryStartTime = performance.now();
     const retryResponse = await fetch(input, requestInit);
+    const retryElapsedMs = Math.round(performance.now() - retryStartTime);
+    logBackendResponse(retryResponse, `${friendlyName} (retry)`, retryElapsedMs, reqId);
 
     if (retryResponse.status !== 401) {
       return retryResponse;

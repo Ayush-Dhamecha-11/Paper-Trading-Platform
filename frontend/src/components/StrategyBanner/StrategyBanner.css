@@ -215,7 +215,7 @@
 
 .strategy-table {
   width: 100%;
-  min-width: 580px;
+  min-width: 650px;
   border-collapse: collapse;
   text-align: left;
 }
@@ -257,6 +257,28 @@
 .sb-col-right {
   text-align: right;
   white-space: nowrap;
+}
+
+.sb-col-weight {
+  width: 5.5rem;
+}
+
+.sb-weight-badge {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  border-radius: 5px;
+  background: var(--sb-accent-bg);
+  border: 1px solid var(--sb-accent-border);
+  color: var(--sb-accent);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-weight-empty {
+  color: var(--sb-muted);
+  font-size: 0.84rem;
 }
 
 .sb-col-total {

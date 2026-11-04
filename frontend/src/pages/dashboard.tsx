@@ -5,8 +5,6 @@ import StockTable from "../components/StockTable/StockTable";
 import { STOCK_UNIVERSE, type Stock } from "../data/stocksData";
 import {
   getStoredUserInfo,
-  authenticatedFetch,
-  logBackendResponse,
   logoutUser,
   setStoredUserInfo,
 } from "../utils/authUtils";
@@ -18,91 +16,31 @@ import {
   getCachedData,
   setCachedData,
 } from "../utils/dataCache";
-import { fetchDashboardStocks } from "../utils/dashboardPrefetch";
+import {
+  fetchDashboardStocks,
+  fetchDashboardSummary,
+  fetchDashboardHoldings,
+  fetchUserProfile,
+  type DashboardHolding,
+  type PortfolioSummary,
+} from "../utils/dashboardPrefetch";
 import { formatCurrency } from "../utils/formatters";
 import { useTradeModal } from "../context/TradeContext";
 import StrategyBanner from "../components/StrategyBanner/StrategyBanner";
 import "../pages_css/dashboard.css";
 
-/*
-const rangeData: Record<"30D" | "6M" | "1Y", number[]> = {
-  "30D": [110, 118, 124, 132, 128, 140, 148, 152, 160, 155, 168, 170],
-  "6M": [90, 96, 104, 110, 118, 123, 131, 138, 146, 155, 162, 170],
-  "1Y": [60, 68, 74, 82, 95, 101, 112, 125, 138, 150, 165, 170],
-};
-
-const sectorAllocation = [
-  { name: "Technology", value: 42, color: "#21d9a3" },
-  { name: "Healthcare", value: 18, color: "#34b3ff" },
-  { name: "Finance", value: 15, color: "#8b7cff" },
-  { name: "Energy", value: 13, color: "#fbbf24" },
-  { name: "Consumer", value: 12, color: "#ff7b72" },
-];
-*/
-
-export type DashboardHolding = {
-  ticker: string;
-  name?: string;
-  quantity: number;
-  price?: number;
-  currentPrice?: number;
-  profit?: number;
-  profitLoss?: number;
-  averagePrice?: number;
-  previousClose?: number;
-};
-
-const API_BASE_URL =
-  import.meta.env.VITE_BACKEND_URL ||
-  import.meta.env.VITE_API_BASE_URL ||
-  "http://localhost:8000";
-
-type PortfolioSummary = {
-  totalPortfolioValue: number;
-  capitalBalance?: number;
-  accountEquity?: number;
-  investedCapital: number;
-  totalProfit: number;
-  todayPnL: number;
-  yesterdayPnL?: number;
-};
+export type { DashboardHolding };
 
 async function fetchStocks(): Promise<Stock[]> {
   return fetchDashboardStocks();
 }
 
 async function fetchHoldings(): Promise<DashboardHolding[]> {
-  try {
-    const response = await authenticatedFetch(`${API_BASE_URL}/api/portfolio`, {
-      credentials: "include",
-    });
-    logBackendResponse(response, "GET /api/portfolio (dashboard holdings)");
-
-    if (!response.ok) {
-      return getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY) ?? [];
-    }
-
-    const data = (await response.json()) as { holdings?: DashboardHolding[] } | DashboardHolding[];
-    const list = Array.isArray(data) ? data : (data.holdings ?? []);
-    setCachedData(HOLDINGS_CACHE_KEY, list);
-    return list;
-  } catch (error) {
-    console.error("Unable to load holdings:", error);
-    return getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY) ?? [];
-  }
+  return fetchDashboardHoldings();
 }
 
 async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
-  const response = await authenticatedFetch(`${API_BASE_URL}/api/dashboard`, {
-    credentials: "include",
-  });
-  logBackendResponse(response, "GET /api/dashboard");
-
-  if (!response.ok) {
-    throw new Error("Unable to load portfolio summary from backend");
-  }
-
-  return response.json();
+  return fetchDashboardSummary();
 }
 
 async function fetchUserInfo(): Promise<{
@@ -113,16 +51,7 @@ async function fetchUserInfo(): Promise<{
     auto_trade: boolean;
   };
 }> {
-  const response = await authenticatedFetch(`${API_BASE_URL}/api/profile`, {
-    credentials: "include",
-  });
-  logBackendResponse(response, "GET /api/profile");
-
-  if (!response.ok) {
-    throw new Error("Unable to load user information from backend");
-  }
-
-  return response.json();
+  return fetchUserProfile();
 }
 
 /*

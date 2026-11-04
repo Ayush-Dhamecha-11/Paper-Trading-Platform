@@ -65,11 +65,11 @@ const DUMMY_PORTFOLIO_DATA: PortfolioData = {
     { label: "Aug", portfolio: 114, benchmark: 110.3, pnl: 14000 },
   ],
   sectorAllocation: [
-    { label: "Banking", value: 30, color: "#5996eb" },
-    { label: "IT", value: 24, color: "#24c6dc" },
-    { label: "Energy", value: 22, color: "#20d89b" },
-    { label: "FMCG", value: 14, color: "#f5b942" },
-    { label: "Pharma", value: 10, color: "#f56b6b" },
+    { label: "Banking", value: 30, color: "#3b82f6" },
+    { label: "IT", value: 24, color: "#00e5ff" },
+    { label: "Energy", value: 22, color: "#10b981" },
+    { label: "FMCG", value: 14, color: "#f59e0b" },
+    { label: "Pharma", value: 10, color: "#f43f5e" },
   ],
   holdings: [
     { ticker: "RELIANCE", name: "Reliance Industries", sector: "Energy", quantity: 24, averagePrice: 2440, currentPrice: 2653.33, previousClose: 2620 },

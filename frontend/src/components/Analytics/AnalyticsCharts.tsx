@@ -13,7 +13,12 @@ import {
   type ChartOptions,
 } from "chart.js";
 import { Bar, Line, Scatter } from "react-chartjs-2";
-import { AllocationDoughnutChart, isGreyOrNeutralColor } from "../../utils/chartUtils";
+import {
+  AllocationDoughnutChart,
+  DISTINCT_CHART_PALETTE,
+  ensureDistinctColors,
+  isGreyOrNeutralColor,
+} from "../../utils/chartUtils";
 import type {
   AllocationPoint,
   MonthlyReturn,
@@ -25,49 +30,8 @@ import "./AnalyticsCharts.css";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler);
 
-export const CHART_PALETTE = [
-  "#24c6dc", // bright cyan
-  "#5996eb", // royal blue
-  "#20d89b", // emerald mint
-  "#f5b942", // amber gold
-  "#f56b6b", // coral red
-  "#aa3bff", // purple violet
-  "#ff7b87", // rose pink
-  "#38bdf8", // sky blue
-  "#fb923c", // vivid orange
-  "#a78bfa", // lavender
-  "#4ade80", // lime green
-  "#f43f5e", // hot pink
-  "#06b6d4", // dark cyan
-  "#eab308", // bright yellow
-  "#818cf8", // indigo
-  "#10b981", // green
-];
-
-export function ensureDistinctColors<T extends { color?: string }>(items: T[]): (T & { color: string })[] {
-  if (!items || items.length === 0) return [];
-
-  const usedColors = new Set<string>();
-
-  return items.map((item, index) => {
-    const rawColor = item.color ? item.color.trim() : "";
-    const isGrey = isGreyOrNeutralColor(rawColor);
-    const isDuplicate = Boolean(rawColor && usedColors.has(rawColor.toLowerCase()));
-
-    let finalColor = rawColor;
-    if (isGrey || isDuplicate || !finalColor) {
-      const unused = CHART_PALETTE.find((c) => !usedColors.has(c.toLowerCase()));
-      finalColor = unused ?? CHART_PALETTE[index % CHART_PALETTE.length];
-    }
-
-    usedColors.add(finalColor.toLowerCase());
-
-    return {
-      ...item,
-      color: finalColor,
-    };
-  });
-}
+export const CHART_PALETTE = DISTINCT_CHART_PALETTE;
+export { ensureDistinctColors };
 
 const chartText = "#9fb3c8";
 const chartGrid = "rgba(148, 163, 184, 0.18)";

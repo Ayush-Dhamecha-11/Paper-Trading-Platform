@@ -20,7 +20,7 @@ import {
 } from "./dataCache";
 import { fetchDailySuggestions, type TradeSuggestion } from "./tradeApi";
 
-type PortfolioSummary = {
+export type PortfolioSummary = {
   totalPortfolioValue: number;
   capitalBalance?: number;
   accountEquity?: number;
@@ -28,6 +28,27 @@ type PortfolioSummary = {
   totalProfit: number;
   todayPnL: number;
   yesterdayPnL?: number;
+};
+
+export type DashboardHolding = {
+  ticker: string;
+  name?: string;
+  quantity: number;
+  price?: number;
+  currentPrice?: number;
+  profit?: number;
+  profitLoss?: number;
+  averagePrice?: number;
+  previousClose?: number;
+};
+
+export type UserProfileInfo = {
+  name: string;
+  email: string;
+  preference: {
+    theme: "Light" | "Dark";
+    auto_trade: boolean;
+  };
 };
 
 let stocksRequest: Promise<Stock[]> | null = null;
@@ -41,6 +62,12 @@ let analyticsFreshUntil = 0;
 
 let suggestionsRequest: Promise<TradeSuggestion[]> | null = null;
 let suggestionsFreshUntil = 0;
+
+let summaryRequest: Promise<PortfolioSummary> | null = null;
+let summaryFreshUntil = 0;
+
+let profileRequest: Promise<UserProfileInfo> | null = null;
+let profileFreshUntil = 0;
 
 export function fetchDashboardStocks(): Promise<Stock[]> {
   const cachedStocks = getCachedData<Stock[]>(DASHBOARD_STOCKS_CACHE_KEY);
@@ -112,6 +139,84 @@ export function fetchPortfolioData(): Promise<PortfolioData> {
   return portfolioRequest;
 }
 
+export function fetchDashboardSummary(force = false): Promise<PortfolioSummary> {
+  const cached = getCachedData<PortfolioSummary>(DASHBOARD_SUMMARY_CACHE_KEY);
+  if (!force && cached && Date.now() < summaryFreshUntil) {
+    return Promise.resolve(cached);
+  }
+
+  if (!force && summaryRequest !== null) {
+    return summaryRequest;
+  }
+
+  summaryRequest = authenticatedFetch(`${getBackendBaseUrl()}/api/dashboard`, {
+    credentials: "include",
+  })
+    .then(async (response) => {
+      logBackendResponse(response, "GET /api/dashboard");
+      if (!response.ok) {
+        throw new Error("Unable to load portfolio summary from backend");
+      }
+
+      const summary = (await response.json()) as PortfolioSummary;
+      setCachedData(DASHBOARD_SUMMARY_CACHE_KEY, summary);
+      if (typeof summary.capitalBalance === "number") {
+        setCachedData(CAPITAL_CACHE_KEY, summary.capitalBalance);
+      }
+      summaryFreshUntil = Date.now() + 10000;
+      return summary;
+    })
+    .finally(() => {
+      summaryRequest = null;
+    });
+
+  return summaryRequest;
+}
+
+export function fetchUserProfile(force = false): Promise<UserProfileInfo> {
+  if (!force && profileRequest !== null) {
+    return profileRequest;
+  }
+
+  profileRequest = authenticatedFetch(`${getBackendBaseUrl()}/api/profile`, {
+    credentials: "include",
+  })
+    .then(async (response) => {
+      logBackendResponse(response, "GET /api/profile");
+      if (!response.ok) {
+        throw new Error("Unable to load user information from backend");
+      }
+
+      const profile = (await response.json()) as UserProfileInfo;
+      setStoredUserInfo({
+        name: profile.name,
+        email: profile.email,
+        theme: profile.preference?.theme,
+        auto_trade: profile.preference?.auto_trade,
+      });
+      profileFreshUntil = Date.now() + 15000;
+      return profile;
+    })
+    .finally(() => {
+      profileRequest = null;
+    });
+
+  return profileRequest;
+}
+
+export async function fetchDashboardHoldings(force = false): Promise<DashboardHolding[]> {
+  try {
+    const portfolio = await fetchPortfolioData();
+    if (portfolio && Array.isArray(portfolio.holdings)) {
+      return portfolio.holdings as unknown as DashboardHolding[];
+    }
+    return getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY) ?? [];
+  } catch (error) {
+    console.error("Unable to load holdings:", error);
+    return getCachedData<DashboardHolding[]>(HOLDINGS_CACHE_KEY) ?? [];
+  }
+}
+
 export function fetchAnalyticsData(): Promise<AnalyticsData> {
   const cached = getCachedData<AnalyticsData>(ANALYTICS_CACHE_KEY);
 
@@ -173,56 +278,9 @@ export function fetchSuggestionsData(stocks?: Stock[]): Promise<TradeSuggestion[
 }
 
 export function warmDashboardData() {
-  const backendBaseUrl = getBackendBaseUrl();
-
   const stocksReq = fetchDashboardStocks();
-
-  const summaryReq = authenticatedFetch(`${backendBaseUrl}/api/dashboard`, {
-    credentials: "include",
-  })
-    .then(async (response) => {
-      logBackendResponse(response, "GET /api/dashboard (prefetch)");
-      if (!response.ok) {
-        throw new Error("Unable to load portfolio summary from backend");
-      }
-
-      const summary = (await response.json()) as PortfolioSummary;
-      setCachedData(DASHBOARD_SUMMARY_CACHE_KEY, summary);
-      if (typeof summary.capitalBalance === "number") {
-        setCachedData(CAPITAL_CACHE_KEY, summary.capitalBalance);
-      }
-      return summary;
-    })
-    .catch(() => null);
-
-  const profileReq = authenticatedFetch(`${backendBaseUrl}/api/profile`, {
-    credentials: "include",
-  })
-    .then(async (response) => {
-      logBackendResponse(response, "GET /api/profile (prefetch)");
-      if (!response.ok) {
-        throw new Error("Unable to load user information from backend");
-      }
-
-      const profile = (await response.json()) as {
-        name?: string;
-        email?: string;
-        preference?: {
-          theme?: "Light" | "Dark";
-          auto_trade?: boolean;
-        };
-      };
-
-      setStoredUserInfo({
-        name: profile.name,
-        email: profile.email,
-        theme: profile.preference?.theme,
-        auto_trade: profile.preference?.auto_trade,
-      });
-      return profile;
-    })
-    .catch(() => null);
-
+  const summaryReq = fetchDashboardSummary().catch(() => null);
+  const profileReq = fetchUserProfile().catch(() => null);
   const portfolioReq = fetchPortfolioData().catch(() => null);
   const analyticsReq = fetchAnalyticsData().catch(() => null);
   const suggestionsReq = fetchSuggestionsData().catch(() => []);

@@ -17,6 +17,7 @@ import {
   executeSuggestionsAsIs,
   areSuggestionsExecutedToday,
   markSuggestionsExecuted,
+  isDummySuggestionList,
   type TradeSuggestion,
 } from "../../utils/tradeApi";
 import type { Stock } from "../../data/stocksData";
@@ -32,9 +33,19 @@ type Props = {
 
 export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   const { openTradeWithBasket } = useTradeModal();
-  const cachedSuggestions = getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY);
+  
+  // Cleanly read cached suggestions, discarding any legacy fake dummy items
+  const cachedSuggestions = useMemo(() => {
+    const cached = getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY);
+    if (cached && isDummySuggestionList(cached)) {
+      sessionStorage.removeItem(SUGGESTIONS_CACHE_KEY);
+      return null;
+    }
+    return cached && cached.length > 0 ? cached : null;
+  }, []);
+
   const [rawSuggestions, setRawSuggestions] = useState<TradeSuggestion[]>(() => cachedSuggestions ?? []);
-  const [loading, setLoading] = useState(() => !cachedSuggestions || cachedSuggestions.length === 0);
+  const [loading, setLoading] = useState(() => !cachedSuggestions);
   const [executing, setExecuting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [executionResult, setExecutionResult] = useState<string | null>(null);
@@ -46,38 +57,43 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
     return Boolean(info?.auto_trade);
   }, []);
 
+  // Fetch suggestions once on component mount without depending on stocks reference
   useEffect(() => {
     let mounted = true;
-    fetchDailySuggestions(stocks)
+    if (!cachedSuggestions) {
+      setLoading(true);
+    }
+
+    fetchDailySuggestions()
       .then((data) => {
-        if (mounted) {
-          setRawSuggestions(data);
-          setLoading(false);
-          const allExecuted =
-            data.length > 0 &&
-            data.every(
-              (s) =>
-                s.status === "executed" ||
-                s.is_executed === true ||
-                s.executed === true ||
-                Boolean(s.executedAt)
-            );
-          if (allExecuted) {
-            setIsAlreadyExecuted(true);
-            markSuggestionsExecuted();
-          } else {
-            setIsAlreadyExecuted(false);
-          }
+        if (!mounted) return;
+        setRawSuggestions(data);
+        setLoading(false);
+        const allExecuted =
+          data.length > 0 &&
+          data.every(
+            (s) =>
+              s.status === "executed" ||
+              s.is_executed === true ||
+              s.executed === true ||
+              Boolean(s.executedAt)
+          );
+        if (allExecuted) {
+          setIsAlreadyExecuted(true);
+          markSuggestionsExecuted();
+        } else {
+          setIsAlreadyExecuted(false);
         }
       })
       .catch((err) => {
         console.error("[StrategyBanner] Error fetching daily suggestions:", err);
         if (mounted) setLoading(false);
       });
+
     return () => {
       mounted = false;
     };
-  }, [stocks]);
+  }, [cachedSuggestions]);
 
   // Listen for suggestion executions across components (e.g. from TradeModal after customizing)
   useEffect(() => {
@@ -104,7 +120,6 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
       getCachedData<Array<{ ticker: string; quantity: number }>>(HOLDINGS_CACHE_KEY) ?? [];
     const heldMap = new Map<string, number>();
     cachedHoldings.forEach((h) => {
-      // Only positive held quantities represent owned shares that can be sold for proceeds
       const heldQty = Math.max(0, h.quantity);
       heldMap.set(
         h.ticker.toUpperCase(),
@@ -164,7 +179,34 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
     [validSuggestions]
   );
 
-  if (dismissed || loading || validSuggestions.length === 0) {
+  if (dismissed) {
+    return null;
+  }
+
+  // Loading state: Show active algorithm desk loading skeleton rather than flashing dummy data
+  if (loading && validSuggestions.length === 0) {
+    return (
+      <section className="strategy-banner strategy-banner-pending" aria-label="Loading Strategy Suggestions">
+        <div className="strategy-banner-header">
+          <div className="strategy-title-group">
+            <div className="strategy-tag-row">
+              <span className="strategy-pill strategy-pill-suggestion">
+                <RefreshCw size={13} className="strategy-spin" aria-hidden="true" />
+                Daily Strategy Desk
+              </span>
+              <span className="strategy-mode-indicator">Connecting to Algorithm…</span>
+            </div>
+            <h3 className="strategy-heading">Fetching Today&apos;s Trade Suggestions…</h3>
+            <p className="strategy-desc">
+              Retrieving algorithmic trade recommendations and model weights from backend.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (validSuggestions.length === 0) {
     return null;
   }
 
@@ -199,6 +241,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
               <tr>
                 <th className="sb-col-action">Action</th>
                 <th>Stock</th>
+                <th className="sb-col-right">Weight</th>
                 <th className="sb-col-right">Qty</th>
                 <th className="sb-col-right">Executed Price</th>
                 <th className="sb-col-right">Total</th>
@@ -214,20 +257,27 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
                         {actionType === "buy" ? "BOUGHT" : actionType === "short" ? "SHORT" : "SOLD"}
                       </span>
                     </td>
-                  <td>
-                    <div className="sb-stock-cell">
-                      <strong className="sb-ticker">{item.ticker}</strong>
-                      <span className="sb-name">{item.name}</span>
-                    </div>
-                  </td>
-                  <td className="sb-col-right">{item.quantity}</td>
-                  <td className="sb-col-right">{formatCurrency(item.price)}</td>
-                  <td className="sb-col-right sb-col-total">
-                    {formatCurrency(item.price * item.quantity)}
-                  </td>
-                </tr>
-              );
-            })}
+                    <td>
+                      <div className="sb-stock-cell">
+                        <strong className="sb-ticker">{item.ticker}</strong>
+                        <span className="sb-name">{item.name}</span>
+                      </div>
+                    </td>
+                    <td className="sb-col-right sb-col-weight">
+                      {typeof item.weight === "number" && !isNaN(item.weight) ? (
+                        <span className="sb-weight-badge">{Number(item.weight.toFixed(2))}%</span>
+                      ) : (
+                        <span className="sb-weight-empty">--</span>
+                      )}
+                    </td>
+                    <td className="sb-col-right">{item.quantity}</td>
+                    <td className="sb-col-right">{formatCurrency(item.price)}</td>
+                    <td className="sb-col-right sb-col-total">
+                      {formatCurrency(item.price * item.quantity)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -272,6 +322,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
         action: s.action,
         quantity: s.quantity,
         predicted: !isAlreadyDone,
+        weight: s.weight,
       }))
     );
   };
@@ -330,6 +381,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
               <tr>
                 <th className="sb-col-action">Action</th>
                 <th>Stock</th>
+                <th className="sb-col-right">Weight</th>
                 <th className="sb-col-right">Suggested Qty</th>
                 <th className="sb-col-right">Market Price</th>
                 <th className="sb-col-right">Estimated Total</th>
@@ -380,6 +432,13 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
                         <strong className="sb-ticker">{item.ticker}</strong>
                         <span className="sb-name">{item.name}</span>
                       </div>
+                    </td>
+                    <td className="sb-col-right sb-col-weight">
+                      {typeof item.weight === "number" && !isNaN(item.weight) ? (
+                        <span className="sb-weight-badge">{Number(item.weight.toFixed(2))}%</span>
+                      ) : (
+                        <span className="sb-weight-empty">--</span>
+                      )}
                     </td>
                     <td className="sb-col-right">{item.quantity}</td>
                     <td className="sb-col-right">{formatCurrency(item.price)}</td>
