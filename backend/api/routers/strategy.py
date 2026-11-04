@@ -14,6 +14,7 @@ from api.services.portfolio_accounting import (
     build_portfolio_state,
     get_position_quotes,
 )
+from api.services.trade_service import calculate_self_financing_rebalance
 from db.database import get_db
 from db.models import ModelPrediction, Order, Position, UniverseStock
 
@@ -33,8 +34,12 @@ def get_strategy_suggestions(
     If the user has already executed predicted orders today (Order.predicted is True in today's date),
     returns those executed orders with status="executed" and executedAt set to the order timestamp.
 
-    Otherwise, calculates the difference between latest model predictions and current portfolio
-    holdings (target_quantity - current_quantity) and returns suggestions with status="pending".
+    Otherwise, calculates self-financing target allocations:
+    1. Conceptually liquidates portfolio to determine available capital (account_equity).
+    2. Uses integer floor on target allocations to guarantee the portfolio is self-financing
+       and cash never goes negative.
+    3. Handles long positions and short selling in 1 net trade per stock.
+    4. Orders suggestions so cash-releasing actions (sells of longs, covers of shorts) come first.
     """
     user_id = user["id"]
     today = today_ist()
@@ -63,22 +68,7 @@ def get_strategy_suggestions(
     )
     stock_name_map = {s.symbol: s.name for s in universe_stocks}
 
-    if executed_orders:
-        return [
-            TradeSuggestionOut(
-                id=f"order_{order.symbol}_{int(order.timestamp.timestamp())}",
-                ticker=order.symbol,
-                name=stock_name_map.get(order.symbol, order.symbol),
-                action="buy" if str(order.order_type).lower() == "buy" else "sell",
-                quantity=float(order.quantity),
-                price=float(order.price),
-                status="executed",
-                executedAt=order.timestamp.isoformat(),
-            )
-            for order in executed_orders
-        ]
-
-    # 2. If no predicted orders executed today, compute pending suggestions
+    # Fetch latest prediction from database to map weights for each symbol
     latest_pred = (
         db.execute(
             select(ModelPrediction)
@@ -88,6 +78,31 @@ def get_strategy_suggestions(
         .scalar_one_or_none()
     )
 
+    symbol_target_raw: dict[str, float] = {}
+    symbol_weights_pct: dict[str, float] = {}
+    if latest_pred and latest_pred.weight_for_symbols:
+        raw_weights = [float(w) for w in latest_pred.weight_for_symbols]
+        for stock, w in zip(universe_stocks, raw_weights):
+            symbol_target_raw[stock.symbol] = w
+            symbol_weights_pct[stock.symbol] = round(w * 100, 2)
+
+    if executed_orders:
+        return [
+            TradeSuggestionOut(
+                id=f"order_{order.symbol}_{int(order.timestamp.timestamp())}",
+                ticker=order.symbol,
+                name=stock_name_map.get(order.symbol, order.symbol),
+                action="buy" if str(order.order_type).lower() == "buy" else "sell",
+                quantity=float(order.quantity),
+                price=float(order.price),
+                weight=symbol_weights_pct.get(order.symbol, 0.0),
+                status="executed",
+                executedAt=order.timestamp.isoformat(),
+            )
+            for order in executed_orders
+        ]
+
+    # 2. If no predicted orders executed today, compute pending suggestions
     if latest_pred is None or not latest_pred.weight_for_symbols:
         return []
 
@@ -98,11 +113,6 @@ def get_strategy_suggestions(
         .all()
     )
     current_qty_by_symbol = {p.symbol: float(p.quantity) for p in positions}
-
-    raw_weights = [float(w) for w in latest_pred.weight_for_symbols]
-    symbol_target_raw: dict[str, float] = {}
-    for stock, w in zip(universe_stocks, raw_weights):
-        symbol_target_raw[stock.symbol] = w
 
     # Determine whether raw_weights are fractional portfolio weights (e.g. 0.05, 0.15)
     # or direct target share counts (e.g. 10.0, 20.0).
@@ -134,39 +144,32 @@ def get_strategy_suggestions(
     else:
         equity = 0.0
 
+    prices = {
+        sym: float(quotes[sym].current_price)
+        for sym in active_symbols
+        if sym in quotes and quotes[sym].current_price > 0
+    }
+
+    # Calculate self-financing rebalancing trades using integer floor and single-trade delta
+    rebalance_trades = calculate_self_financing_rebalance(
+        current_positions=current_qty_by_symbol,
+        account_equity=equity,
+        symbol_weights=symbol_target_raw,
+        prices=prices,
+        is_portfolio_weights=is_portfolio_weights,
+    )
+
     suggestions: list[TradeSuggestionOut] = []
-
-    for sym in active_symbols:
-        quote = quotes.get(sym)
-        current_price = float(quote.current_price) if quote else 0.0
-
-        if is_portfolio_weights:
-            weight = symbol_target_raw.get(sym, 0.0)
-            if current_price > 0:
-                target_qty = round((equity * weight) / current_price)
-            else:
-                target_qty = 0
-        else:
-            target_qty = round(symbol_target_raw.get(sym, 0.0))
-
-        current_qty = current_qty_by_symbol.get(sym, 0.0)
-        diff = target_qty - current_qty
-
-        # Only suggest trades with positive quantity difference
-        if round(abs(diff)) <= 0:
-            continue
-
-        trade_qty = float(abs(round(diff)))
-        action = "buy" if diff > 0 else "sell"
-
+    for t in rebalance_trades:
         suggestions.append(
             TradeSuggestionOut(
-                id=f"pending_{sym}_{latest_pred.as_of_date.isoformat()}",
-                ticker=sym,
-                name=stock_name_map.get(sym, sym),
-                action=action,
-                quantity=trade_qty,
-                price=current_price,
+                id=f"pending_{t.symbol}_{latest_pred.as_of_date.isoformat()}",
+                ticker=t.symbol,
+                name=stock_name_map.get(t.symbol, t.symbol),
+                action=t.action,
+                quantity=float(t.quantity),
+                price=float(t.price),
+                weight=symbol_weights_pct.get(t.symbol, 0.0),
                 status="pending",
                 executedAt=None,
             )

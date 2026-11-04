@@ -13,6 +13,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     UniqueConstraint,
@@ -506,3 +507,58 @@ class Characteristics(Base):
 
     def __repr__(self) -> str:
         return f"<FirmCharacteristics {self.symbol} {self.day}>"
+
+
+# Auto-Trade Execution Audit Log
+class AutoTradeExecution(Base):
+    """
+    Log of automated trade executions per user and date.
+    Tracks execution timestamp so missed runs (e.g. server offline or asleep)
+    can catch up when the server restarts during market hours.
+    """
+
+    __tablename__ = "auto_trade_executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+
+    execution_date: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+    )
+
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    status: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+    )
+
+    orders_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    details: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return f"<AutoTradeExecution {self.user_id} {self.execution_date} {self.status}>"
