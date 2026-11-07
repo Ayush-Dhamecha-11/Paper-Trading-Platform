@@ -20,7 +20,7 @@ app = FastAPI(title="Paper Trading Platform", lifespan=lifespan)
 
 # CORS settings
 origins = [
-    os.getenv("FRONTEND_URL"),
+    "https://paper-trading-platform-taupe.vercel.app/",
 ]
 
 app.add_middleware(
