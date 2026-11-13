@@ -35,12 +35,13 @@ def register(payload: RegisterRequest):
                 detail="Email is already registered. Please login."
             )
 
+        redirect_url = os.getenv("FRONTEND_URL")
         # Register new user
         res = supabase.auth.sign_up({
             "email": payload.email,
             "password": payload.password,
             "options": {
-                "email_redirect_to": "http://localhost:5173/register/callback"
+                "email_redirect_to": f"{redirect_url}/register/callback"
             }
         })
 
@@ -112,9 +113,10 @@ def login(payload: LoginRequest, response: Response):
 @router.post("/forgot-password")
 def forgot_password(payload: ForgotPasswordRequest):
     try:
+        redirect_url = os.getenv("FRONTEND_URL")
         supabase.auth.reset_password_for_email(
             payload.email,
-            { "redirect_to": "http://127.0.0.1:5173/reset-password"}
+            { "redirect_to": f"{redirect_url}/reset-password"}
         )
 
         return { "message": "Password reset email sent"}
@@ -147,7 +149,7 @@ def reset_password(payload: ResetPasswordRequest):
 
 @router.get("/google/login")
 def google_login():
-    redirect_url = os.getenv("GOOGLE_REDIRECT_URL_LOC")
+    redirect_url = os.getenv("GOOGLE_REDIRECT_URL_RENDER")
     try:
         res = supabase.auth.sign_in_with_oauth({
             "provider": "google",
@@ -174,7 +176,7 @@ def google_callback(code: str, response: Response):
                 detail="Could not create session"
             )
 
-        frontend_url = "http://localhost:5173/auth/google/callback"
+        frontend_url = f"{os.getenv('FRONTEND_URL')}/auth/google/callback"
 
         response1 = RedirectResponse(
             url=frontend_url,
