@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -176,3 +176,24 @@ def get_strategy_suggestions(
         )
 
     return suggestions
+
+@router.get("/strategy/simulation")
+def get_strategy_simulation(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    initial_capital: float = 1_000_000.0,
+    model_name: Optional[str] = "attention_factor_longconv",
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Alias for /api/simulation within the strategy router."""
+    from api.routers.simulation import get_simulation
+
+    return get_simulation(
+        start_date=start_date,
+        end_date=end_date,
+        initial_capital=initial_capital,
+        model_name=model_name,
+        db=db,
+    )
+

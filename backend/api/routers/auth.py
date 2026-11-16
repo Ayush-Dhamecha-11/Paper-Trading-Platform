@@ -149,7 +149,7 @@ def reset_password(payload: ResetPasswordRequest):
 
 @router.get("/google/login")
 def google_login():
-    redirect_url = os.getenv("GOOGLE_REDIRECT_URL_RENDER")
+    redirect_url = os.getenv("GOOGLE_REDIRECT_URL")
     try:
         res = supabase.auth.sign_in_with_oauth({
             "provider": "google",

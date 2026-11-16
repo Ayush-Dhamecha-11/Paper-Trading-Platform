@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import analytics, auth, dashboard, portfolio, profile, strategy, trade
+from api.routers import analytics, auth, dashboard, portfolio, profile, strategy, trade, simulation
 from jobs.auto_trade_cron import start_auto_trade_scheduler, stop_auto_trade_scheduler
 import os
 
@@ -20,8 +20,7 @@ app = FastAPI(title="Paper Trading Platform", lifespan=lifespan)
 
 # CORS settings
 origins = [
-    "https://paper-trading-platform-taupe.vercel.app",
-    "http://localhost:5173",
+    os.getenv("FRONTEND_URL")
 ]
 
 app.add_middleware(
@@ -39,3 +38,4 @@ app.include_router(analytics.router)
 app.include_router(portfolio.router)
 app.include_router(trade.router)
 app.include_router(strategy.router)
+app.include_router(simulation.router)
