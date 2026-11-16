@@ -25,6 +25,7 @@ import { useTradeModal } from "../../context/TradeContext";
 import { getStoredUserInfo } from "../../utils/authUtils";
 import { getCachedData, HOLDINGS_CACHE_KEY, SUGGESTIONS_CACHE_KEY } from "../../utils/dataCache";
 import { isMarketClosed } from "../../utils/marketUtils";
+import { trackAction, useResetStuckAction } from "../../utils/actionWatchdog";
 import "./StrategyBanner.css";
 
 type Props = {
@@ -50,6 +51,11 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   const [dismissed, setDismissed] = useState(false);
   const [executionResult, setExecutionResult] = useState<string | null>(null);
   const [isAlreadyExecuted, setIsAlreadyExecuted] = useState(() => areSuggestionsExecutedToday());
+
+  // Auto-recover execution button if action times out or is cancelled
+  useResetStuckAction(() => {
+    setExecuting(false);
+  });
 
   // Check user's auto_trade preference (stored in userInfo)
   const isAutoTradeOn = useMemo(() => {
@@ -299,12 +305,14 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
     }
     setExecuting(true);
     try {
-      await executeSuggestionsAsIs(validSuggestions);
-      markSuggestionsExecuted();
-      setIsAlreadyExecuted(true);
-      setExecutionResult("All strategy suggestions executed successfully!");
-      window.dispatchEvent(new CustomEvent("suggestions-executed"));
-      window.dispatchEvent(new CustomEvent("trade-executed"));
+      await trackAction("Execute Strategy As-Is", async () => {
+        await executeSuggestionsAsIs(validSuggestions);
+        markSuggestionsExecuted();
+        setIsAlreadyExecuted(true);
+        setExecutionResult("All strategy suggestions executed successfully!");
+        window.dispatchEvent(new CustomEvent("suggestions-executed"));
+        window.dispatchEvent(new CustomEvent("trade-executed"));
+      });
     } catch (err) {
       setExecutionResult(err instanceof Error ? err.message : "Execution failed");
     } finally {

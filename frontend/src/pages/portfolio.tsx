@@ -30,6 +30,20 @@ export type PortfolioHolding = {
   averagePrice: number;
   currentPrice: number;
   previousClose: number;
+  weight?: number;
+};
+
+export type StockAllocationPoint = {
+  ticker?: string;
+  symbol?: string;
+  label?: string;
+  name?: string;
+  value?: number;
+  weight?: number;
+  weightPct?: number;
+  percentage?: number;
+  allocation?: number;
+  color?: string;
 };
 
 export type PortfolioData = {
@@ -42,8 +56,31 @@ export type PortfolioData = {
   };
   performanceSeries: TimeSeriesPoint[];
   sectorAllocation: AllocationPoint[];
+  stockAllocation?: StockAllocationPoint[] | AllocationPoint[];
   holdings: PortfolioHolding[];
 };
+
+function extractAllocationWeight(item: unknown): number | undefined {
+  if (item == null) return undefined;
+  if (typeof item === "number") return item;
+  if (typeof item === "object") {
+    const candidate = item as Record<string, unknown>;
+    const raw =
+      candidate.weight ??
+      candidate.weightPct ??
+      candidate.weight_pct ??
+      candidate.value ??
+      candidate.percentage ??
+      candidate.allocation;
+
+    if (typeof raw === "number") return raw;
+    if (typeof raw === "string") {
+      const parsed = parseFloat(raw.replace("%", "").trim());
+      return isNaN(parsed) ? undefined : parsed;
+    }
+  }
+  return undefined;
+}
 
 type HoldingPerformanceFilter = "all" | "profit" | "loss";
 
@@ -70,6 +107,18 @@ const DUMMY_PORTFOLIO_DATA: PortfolioData = {
     { label: "Energy", value: 22, color: "#10b981" },
     { label: "FMCG", value: 14, color: "#f59e0b" },
     { label: "Pharma", value: 10, color: "#f43f5e" },
+  ],
+  stockAllocation: [
+    { label: "RELIANCE", ticker: "RELIANCE", value: 24.5 },
+    { label: "HDFCBANK", ticker: "HDFCBANK", value: 15.3 },
+    { label: "ICICIBANK", ticker: "ICICIBANK", value: 12.0 },
+    { label: "SBIN", ticker: "SBIN", value: 10.8 },
+    { label: "TCS", ticker: "TCS", value: 9.5 },
+    { label: "INFY", ticker: "INFY", value: 8.2 },
+    { label: "ITC", ticker: "ITC", value: 6.9 },
+    { label: "HINDUNILVR", ticker: "HINDUNILVR", value: 5.1 },
+    { label: "SUNPHARMA", ticker: "SUNPHARMA", value: 4.3 },
+    { label: "CIPLA", ticker: "CIPLA", value: 3.4 },
   ],
   holdings: [
     { ticker: "RELIANCE", name: "Reliance Industries", sector: "Energy", quantity: 24, averagePrice: 2440, currentPrice: 2653.33, previousClose: 2620 },
@@ -197,20 +246,66 @@ function PortfolioPage() {
     [data.sectorAllocation]
   );
 
-  const holdings = useMemo(() => (data.holdings ?? []).map((holding) => {
-    const marketValue = holding.quantity * holding.currentPrice;
-    const investedValue = holding.quantity * holding.averagePrice;
-    const profitLoss = marketValue - investedValue;
-    const dailyGainLoss = holding.quantity * (holding.currentPrice - holding.previousClose);
-    return {
-      ...holding,
-      marketValue,
-      profitLoss,
-      profitLossPct: investedValue ? (profitLoss / investedValue) * 100 : 0,
-      dailyGainLoss,
-      dailyChangePct: holding.previousClose ? ((holding.currentPrice - holding.previousClose) / holding.previousClose) * 100 : 0,
-    };
-  }), [data.holdings]);
+  const allocationMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const list = data.stockAllocation ?? [];
+    for (const item of list) {
+      const weight = extractAllocationWeight(item);
+      if (typeof weight === "number" && !isNaN(weight)) {
+        const candidate = item as Record<string, unknown>;
+        const rawKey =
+          candidate.ticker ??
+          candidate.symbol ??
+          candidate.label ??
+          candidate.name ??
+          "";
+        const key = String(rawKey).trim().toUpperCase();
+        if (key) {
+          map.set(key, weight);
+        }
+      }
+    }
+    return map;
+  }, [data.stockAllocation]);
+
+  const holdings = useMemo(() => {
+    const totalPortfolioValue =
+      data.summary?.portfolioValue ||
+      (data.holdings ?? []).reduce(
+        (sum, h) => sum + h.quantity * (h.currentPrice ?? h.averagePrice ?? 0),
+        0
+      );
+
+    return (data.holdings ?? []).map((holding) => {
+      const marketValue = holding.quantity * holding.currentPrice;
+      const investedValue = holding.quantity * holding.averagePrice;
+      const profitLoss = marketValue - investedValue;
+      const dailyGainLoss = holding.quantity * (holding.currentPrice - holding.previousClose);
+
+      const tickerKey = holding.ticker.trim().toUpperCase();
+      const mappedWeight = allocationMap.get(tickerKey);
+      const computedWeight =
+        typeof mappedWeight === "number"
+          ? mappedWeight
+          : typeof holding.weight === "number"
+          ? holding.weight
+          : totalPortfolioValue > 0
+          ? (marketValue / totalPortfolioValue) * 100
+          : 0;
+
+      return {
+        ...holding,
+        marketValue,
+        profitLoss,
+        profitLossPct: investedValue ? (profitLoss / investedValue) * 100 : 0,
+        dailyGainLoss,
+        dailyChangePct: holding.previousClose
+          ? ((holding.currentPrice - holding.previousClose) / holding.previousClose) * 100
+          : 0,
+        weight: Number(computedWeight.toFixed(2)),
+      };
+    });
+  }, [data.holdings, data.summary, allocationMap]);
 
   const holdingSectors = useMemo(
     () => Array.from(new Set(holdings.map((holding) => holding.sector))).sort((left, right) => left.localeCompare(right)),
@@ -339,10 +434,17 @@ function PortfolioPage() {
             </div>
             <div className="portfolio-table-wrap">
               <table className="portfolio-holdings-table">
-                <thead><tr><th>Stock</th><th>Qty</th><th>Current price</th><th>Last price</th><th>Market value</th><th>P/L</th><th>Day change</th><th className="portfolio-action-col">Action</th></tr></thead>
+                <thead><tr><th>Stock</th><th>Weight</th><th>Qty</th><th>Current price</th><th>Last price</th><th>Market value</th><th>P/L</th><th>Day change</th><th className="portfolio-action-col">Action</th></tr></thead>
                 <tbody>{filteredHoldings.map((holding) => (
                   <tr key={holding.ticker}>
                     <td><strong>{holding.ticker}</strong><span>{holding.name} · {holding.sector}</span></td>
+                    <td className="portfolio-weight-cell">
+                      <span className="portfolio-weight-badge">
+                        {typeof holding.weight === "number" && !isNaN(holding.weight)
+                          ? `${Number(holding.weight.toFixed(2))}%`
+                          : "--"}
+                      </span>
+                    </td>
                     <td>{holding.quantity.toLocaleString("en-IN")}</td>
                     <td>{formatCurrency(holding.currentPrice)}</td>
                     <td>{formatCurrency(holding.previousClose)}</td>

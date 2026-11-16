@@ -1,0 +1,611 @@
+/* ── Simulation Page CSS ───────────────────────────────────────────── */
+:root {
+  --sim-bg: #071426;
+  --sim-panel: rgba(15, 23, 42, 0.94);
+  --sim-panel-strong: rgba(11, 18, 32, 0.98);
+  --sim-border: rgba(148, 163, 184, 0.14);
+  --sim-text: #f7fbff;
+  --sim-text-strong: #ffffff;
+  --sim-muted: #9fb3c8;
+  --sim-accent: #27c7dc;
+  --sim-purple: #a855f7;
+  --sim-positive: #20d89b;
+  --sim-negative: #f56b6b;
+  --sim-warning: #f59e0b;
+  --sim-shadow: rgba(0, 0, 0, 0.25);
+  --sim-card-bg: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(11, 18, 32, 0.98));
+}
+
+[data-theme="light"] {
+  --sim-bg: #f5f9fc;
+  --sim-panel: #ffffff;
+  --sim-panel-strong: #f4f8fb;
+  --sim-border: rgba(7, 20, 38, 0.12);
+  --sim-text: #071426;
+  --sim-text-strong: #020d1a;
+  --sim-muted: #52677b;
+  --sim-accent: #1094a8;
+  --sim-purple: #8b5cf6;
+  --sim-positive: #0a9568;
+  --sim-negative: #d84858;
+  --sim-warning: #d97706;
+  --sim-shadow: rgba(7, 20, 38, 0.08);
+  --sim-card-bg: linear-gradient(180deg, #ffffff, #f7fafc);
+}
+
+.simulation-page {
+  min-height: 100vh;
+  background: var(--sim-bg);
+  color: var(--sim-text);
+  font-family: Inter, "Segoe UI", sans-serif;
+}
+
+.simulation-shell {
+  width: 100%;
+  padding: 1.4rem 1.4rem 5rem;
+  box-sizing: border-box;
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────── */
+.simulation-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.simulation-kicker {
+  margin: 0 0 0.35rem;
+  color: var(--sim-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.simulation-hero h1 {
+  margin: 0;
+  font-size: clamp(2rem, 3vw, 3rem);
+  letter-spacing: -0.02em;
+  color: var(--sim-text-strong);
+}
+
+.simulation-hero p:not(.simulation-kicker) {
+  margin: 0.45rem 0 0;
+  color: var(--sim-muted);
+  font-size: 0.95rem;
+}
+
+.simulation-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--sim-border);
+  border-radius: 999px;
+  padding: 0.45rem 0.85rem;
+  color: var(--sim-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  background: rgba(39, 199, 220, 0.08);
+  white-space: nowrap;
+}
+
+.simulation-badge-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 20%, transparent);
+}
+
+/* ── Parameters / Controls Card ───────────────────────────────────── */
+.simulation-controls-panel {
+  border: 1px solid var(--sim-border);
+  border-radius: 1rem;
+  background: var(--sim-card-bg);
+  box-shadow: 0 0.8rem 1.8rem var(--sim-shadow);
+  padding: 1.4rem 1.6rem;
+  margin-bottom: 1.5rem;
+}
+
+.simulation-controls-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+  flex-wrap: wrap;
+}
+
+.simulation-controls-title h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--sim-text-strong);
+}
+
+.simulation-controls-hint {
+  font-size: 0.78rem;
+  color: var(--sim-muted);
+}
+
+.simulation-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 1.2rem;
+  align-items: flex-end;
+}
+
+.simulation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.simulation-field label {
+  color: var(--sim-muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.simulation-field input,
+.simulation-field select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--sim-border);
+  border-radius: 8px;
+  background: var(--sim-panel-strong);
+  color: var(--sim-text);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.65rem 0.85rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.simulation-field input:focus,
+.simulation-field select:focus {
+  border-color: var(--sim-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sim-accent) 20%, transparent);
+}
+
+.simulation-capital-presets {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.simulation-preset-btn {
+  background: transparent;
+  border: 1px solid var(--sim-border);
+  border-radius: 4px;
+  color: var(--sim-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.45rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.simulation-preset-btn:hover {
+  border-color: var(--sim-accent);
+  color: var(--sim-accent);
+}
+
+.simulation-submit-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.simulation-run-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #00d2ff, #0099ff);
+  color: #031326;
+  font-weight: 800;
+  font-size: 0.92rem;
+  padding: 0.75rem 1.4rem;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 210, 255, 0.25);
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+  white-space: nowrap;
+}
+
+.simulation-run-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 210, 255, 0.35);
+}
+
+.simulation-run-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.simulation-spin {
+  animation: simSpin 0.9s linear infinite;
+}
+
+@keyframes simSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.simulation-error-box {
+  margin-top: 1rem;
+  padding: 0.65rem 0.95rem;
+  background: rgba(245, 107, 107, 0.12);
+  border: 1px solid rgba(245, 107, 107, 0.3);
+  border-radius: 6px;
+  color: var(--sim-negative);
+  font-size: 0.84rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── Fallback Demo Notice Banner ──────────────────────────────────── */
+.simulation-demo-notice {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 1.1rem;
+  margin-bottom: 1.4rem;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  color: #fbbf24;
+  font-size: 0.84rem;
+}
+
+.simulation-demo-notice strong {
+  color: #fef08a;
+}
+
+/* ── Tier Switcher (Floored vs Ideal) ──────────────────────────────── */
+.simulation-tier-switcher-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+  flex-wrap: wrap;
+}
+
+.simulation-tier-tabs {
+  display: inline-flex;
+  padding: 0.3rem;
+  border-radius: 8px;
+  background: var(--sim-panel-strong);
+  border: 1px solid var(--sim-border);
+  gap: 0.35rem;
+}
+
+.simulation-tier-tab {
+  border: none;
+  background: transparent;
+  color: var(--sim-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.45rem 0.95rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.simulation-tier-tab.active {
+  background: var(--sim-card-bg);
+  color: var(--sim-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--sim-border);
+}
+
+.simulation-tier-tab.active.ideal-active {
+  color: var(--sim-purple);
+}
+
+.simulation-tier-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  font-size: 0.82rem;
+  color: var(--sim-muted);
+  flex-wrap: wrap;
+}
+
+.simulation-tier-meta strong {
+  color: var(--sim-text-strong);
+}
+
+/* ── Summary Cards Grid ───────────────────────────────────────────── */
+.simulation-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.simulation-stat-card {
+  border: 1px solid var(--sim-border);
+  border-radius: 1rem;
+  background: var(--sim-card-bg);
+  box-shadow: 0 0.7rem 1.5rem var(--sim-shadow);
+  padding: 1.25rem 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.simulation-stat-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--sim-border);
+}
+
+.simulation-stat-card.positive::before {
+  background: var(--sim-positive);
+}
+
+.simulation-stat-card.negative::before {
+  background: var(--sim-negative);
+}
+
+.simulation-stat-card.accent::before {
+  background: var(--sim-accent);
+}
+
+.simulation-stat-card.purple::before {
+  background: var(--sim-purple);
+}
+
+.simulation-stat-card.warning::before {
+  background: var(--sim-warning);
+}
+
+.simulation-stat-card span.stat-label {
+  color: var(--sim-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.simulation-stat-card strong.stat-value {
+  color: var(--sim-text-strong);
+  font-size: clamp(1.4rem, 2.2vw, 1.85rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.simulation-stat-card small.stat-note {
+  color: var(--sim-muted);
+  font-size: 0.78rem;
+}
+
+.stat-value.positive {
+  color: var(--sim-positive);
+}
+
+.stat-value.negative {
+  color: var(--sim-negative);
+}
+
+/* ── Chart Panel ──────────────────────────────────────────────────── */
+.simulation-chart-panel {
+  border: 1px solid var(--sim-border);
+  border-radius: 1rem;
+  background: var(--sim-card-bg);
+  box-shadow: 0 0.8rem 1.8rem var(--sim-shadow);
+  padding: 1.4rem 1.6rem;
+  margin-bottom: 1.5rem;
+}
+
+.simulation-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.2rem;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.simulation-chart-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--sim-text-strong);
+}
+
+.simulation-chart-toggles {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.simulation-chart-toggle-btn {
+  background: var(--sim-panel-strong);
+  border: 1px solid var(--sim-border);
+  color: var(--sim-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 0.35rem 0.7rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.simulation-chart-toggle-btn.active {
+  background: rgba(39, 199, 220, 0.15);
+  border-color: var(--sim-accent);
+  color: var(--sim-accent);
+}
+
+.simulation-chart-wrap {
+  width: 100%;
+  height: 340px;
+  position: relative;
+}
+
+/* ── Table Panel ──────────────────────────────────────────────────── */
+.simulation-table-panel {
+  border: 1px solid var(--sim-border);
+  border-radius: 1rem;
+  background: var(--sim-card-bg);
+  box-shadow: 0 0.8rem 1.8rem var(--sim-shadow);
+  overflow: hidden;
+  margin-bottom: 1.5rem;
+}
+
+.simulation-table-header {
+  padding: 1.2rem 1.5rem;
+  border-bottom: 1px solid var(--sim-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.simulation-table-header h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--sim-text-strong);
+}
+
+.simulation-day-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--sim-muted);
+}
+
+.simulation-day-selector select {
+  background: var(--sim-panel-strong);
+  border: 1px solid var(--sim-border);
+  color: var(--sim-text);
+  padding: 0.4rem 0.65rem;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.simulation-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.simulation-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+}
+
+.simulation-table th,
+.simulation-table td {
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid var(--sim-border);
+  text-align: right;
+  white-space: nowrap;
+  color: var(--sim-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-table th {
+  color: var(--sim-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  background: var(--sim-panel-strong);
+}
+
+.simulation-table th:first-child,
+.simulation-table td:first-child {
+  text-align: left;
+}
+
+.simulation-table tbody tr:hover {
+  background: color-mix(in srgb, var(--sim-accent) 5%, transparent);
+}
+
+.sim-stock-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.sim-stock-cell strong {
+  color: var(--sim-accent);
+  font-weight: 800;
+  font-size: 0.92rem;
+}
+
+.sim-stock-cell span {
+  color: var(--sim-muted);
+  font-size: 0.74rem;
+  margin-top: 0.15rem;
+}
+
+.sim-weight-badge {
+  display: inline-block;
+  padding: 0.22rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: 6px;
+  background: rgba(39, 199, 220, 0.12);
+  color: var(--sim-accent);
+  border: 1px solid rgba(39, 199, 220, 0.28);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sim-positive {
+  color: var(--sim-positive);
+  font-weight: 700;
+}
+
+.sim-negative {
+  color: var(--sim-negative);
+  font-weight: 700;
+}
+
+.sim-fractional-note {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--sim-muted);
+  margin-top: 0.1rem;
+}
+
+/* ── Responsive adjustments ───────────────────────────────────────── */
+@media (max-width: 768px) {
+  .simulation-shell {
+    padding: 1rem 0.8rem 4rem;
+  }
+  .simulation-controls-panel {
+    padding: 1.1rem;
+  }
+  .simulation-chart-wrap {
+    height: 270px;
+  }
+}

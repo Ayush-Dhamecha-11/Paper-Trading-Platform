@@ -3,10 +3,13 @@ import { useNavigate } from "react-router-dom";
 import PasswordField from "../components/PasswordField";
 import { showAuthNotice } from "../utils/authNotice";
 import {
+  logBackendRequest,
   logBackendResponse,
   markUserLoggedIn,
   setStoredAuthToken,
+  fetchWithTimeout,
 } from "../utils/authUtils";
+import { trackAction, useResetStuckAction } from "../utils/actionWatchdog";
 import { warmDashboardData } from "../utils/dashboardPrefetch";
 import "../pages_css/login.css";
 
@@ -30,6 +33,11 @@ export default function AuthPage({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Auto-unfreeze button if action is cancelled or times out
+  useResetStuckAction(() => {
+    setLoading(false);
+  });
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const savedTheme = localStorage.getItem("Tradonova-theme");
 
@@ -133,7 +141,8 @@ export default function AuthPage({
         queryUrl.searchParams.set(key, serializeQueryValue(value));
       });
 
-      return fetch(queryUrl.toString(), requestOptions).then(async (response) => {
+      logBackendRequest(method, queryUrl.toString(), undefined, `${method} ${normalizedEndpoint}`);
+      return fetchWithTimeout(queryUrl.toString(), requestOptions, 15000).then(async (response) => {
         logBackendResponse(response, `${method} ${normalizedEndpoint}`);
         const data = await response.json().catch(() => ({}));
 
@@ -145,7 +154,8 @@ export default function AuthPage({
       });
     }
 
-    const response = await fetch(url, requestOptions);
+    logBackendRequest(method, url, undefined, `${method} ${normalizedEndpoint}`);
+    const response = await fetchWithTimeout(url, requestOptions, 15000);
     logBackendResponse(response, `${method} ${normalizedEndpoint}`);
     const data = await response.json().catch(() => ({}));
 
@@ -193,27 +203,37 @@ export default function AuthPage({
     setLoading(true);
 
     try {
-      const endpoint = isLogin ? "/auth/login" : "/auth/register";
-      const response = await apiRequest(endpoint, "POST", {
-        email,
-        password,
-      });
+      await trackAction(
+        isLogin ? "User Login" : "User Registration",
+        async () => {
+          const endpoint = isLogin ? "/auth/login" : "/auth/register";
+          const response = await apiRequest(endpoint, "POST", {
+            email,
+            password,
+          });
 
-      if (response.message) {
-        setError("");
-        showAuthNotice(response.message, "success");
-      }
+          if (response.message) {
+            setError("");
+            showAuthNotice(response.message, "success");
+          }
 
-      if (isLogin) {
-        const warmPromise = warmDashboardData();
-        await Promise.race([warmPromise, new Promise((resolve) => setTimeout(resolve, 400))]);
-        markLoggedIn();
-      }
+          if (isLogin) {
+            const warmPromise = warmDashboardData();
+            await Promise.race([warmPromise, new Promise((resolve) => setTimeout(resolve, 400))]);
+            markLoggedIn();
+          }
 
-      console.log(isLogin ? "Login:" : "Sign up:", response);
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Authentication failed.";
-      setError(message);
+          console.log(isLogin ? "Login:" : "Sign up:", response);
+        },
+        {
+          onError: (requestError) => {
+            const message = requestError instanceof Error ? requestError.message : "Authentication failed.";
+            setError(message);
+          },
+        }
+      );
+    } catch {
+      // Handled in onError
     } finally {
       setLoading(false);
     }
@@ -224,34 +244,43 @@ export default function AuthPage({
     setError("");
 
     try {
-      const endpoint = isLogin ? "/auth/google/login" : "/auth/google/signup";
-      const result = await apiRequest(endpoint, "GET", {
-        provider: "google",
-      });
+      await trackAction(
+        "Google Authentication Redirect",
+        async () => {
+          const endpoint = isLogin ? "/auth/google/login" : "/auth/google/signup";
+          const result = await apiRequest(endpoint, "GET", {
+            provider: "google",
+          });
 
-      const redirectUrl =
-        result?.url ||
-        result?.redirectUrl ||
-        result?.auth_url ||
-        result?.result?.url ||
-        result?.data?.url;
+          const redirectUrl =
+            result?.url ||
+            result?.redirectUrl ||
+            result?.auth_url ||
+            result?.result?.url ||
+            result?.data?.url;
 
-      if (redirectUrl) {
-        window.location.href = redirectUrl;
-        return;
-      }
+          if (redirectUrl) {
+            window.location.href = redirectUrl;
+            return;
+          }
 
-      if (result?.token || result?.access_token || result?.auth_token) {
-        const token = result?.token || result?.access_token || result?.auth_token;
-        saveAuthToken(token, result?.refresh_token);
-        return;
-      }
+          if (result?.token || result?.access_token || result?.auth_token) {
+            const token = result?.token || result?.access_token || result?.auth_token;
+            saveAuthToken(token, result?.refresh_token);
+            return;
+          }
 
-      markLoggedIn();
-      return;
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Google authentication failed.";
-      setError(message);
+          markLoggedIn();
+        },
+        {
+          onError: (requestError) => {
+            const message = requestError instanceof Error ? requestError.message : "Google authentication failed.";
+            setError(message);
+          },
+        }
+      );
+    } catch {
+      // Handled in onError
     } finally {
       setLoading(false);
     }

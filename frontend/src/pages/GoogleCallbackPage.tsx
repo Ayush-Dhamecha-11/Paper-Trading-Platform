@@ -39,16 +39,30 @@ export default function GoogleCallbackPage() {
     hasProcessedCode.current = true;
 
     const finalizeLogin = async () => {
+      const exchangeUrl = `${backendBaseUrl}/auth/google/callback?code=${encodeURIComponent(code)}`;
+
+      console.group(
+        "%c[Google Callback Verification] 📥 Backend / Google Redirect Received",
+        "color: #00d2ff; font-weight: bold; background: rgba(0, 210, 255, 0.15); padding: 4px 8px; border-radius: 4px;"
+      );
+      console.log("📍 Current URL:", window.location.href);
+      console.log("🔑 Received Auth Code:", code);
+      console.log("⏰ Received At:", new Date().toLocaleTimeString());
+      console.log("🌐 Calling Backend Exchange Endpoint:", exchangeUrl);
+      console.groupEnd();
+
       try {
         const response = await authenticatedFetch(
-          `${backendBaseUrl}/auth/google/callback?code=${encodeURIComponent(code)}`,
+          exchangeUrl,
           {
             method: "GET",
             headers: {
               Accept: "application/json",
             },
             credentials: "include",
-          }
+            timeoutMs: 15000,
+          },
+          "GET /auth/google/callback"
         );
 
         logBackendResponse(response, "GET /auth/google/callback");
@@ -58,12 +72,27 @@ export default function GoogleCallbackPage() {
           .catch(() => ({}));
 
         if (!response.ok) {
+          console.error(
+            "%c[Google Callback Verification] ❌ Backend rejected Google redirect:",
+            "color: #ff5e6d; font-weight: bold; background: rgba(255, 94, 109, 0.15); padding: 4px 8px; border-radius: 4px;",
+            {
+              status: response.status,
+              statusText: response.statusText,
+              errorData: data,
+            }
+          );
           throw new Error(
             data.detail ||
               data.message ||
-              "Google login failed."
+              `Google login failed (${response.status} ${response.statusText}).`
           );
         }
+
+        console.log(
+          "%c[Google Callback Verification] ✅ Backend verified Google code successfully!",
+          "color: #20d89b; font-weight: bold; background: rgba(32, 216, 155, 0.15); padding: 4px 8px; border-radius: 4px;",
+          data
+        );
 
         const successText = data.message || "Google login successful.";
 
@@ -96,6 +125,11 @@ export default function GoogleCallbackPage() {
             ? error.message
             : "Google login failed.";
 
+        console.error(
+          "%c[Google Callback Verification] ❌ Verification error:",
+          "color: #ff5e6d; font-weight: bold;",
+          error
+        );
         setStatusText(message);
         showAuthNotice(message, "error");
 
