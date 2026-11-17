@@ -46,6 +46,7 @@ import {
   areSuggestionsExecutedToday,
 } from "../../utils/tradeApi";
 import { isMarketClosed } from "../../utils/marketUtils";
+import { trackAction, useResetStuckAction } from "../../utils/actionWatchdog";
 import "./TradeModal.css";
 
 export type BasketOrder = {
@@ -222,6 +223,12 @@ export default function TradeModal({
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeError, setTradeError] = useState<string>("");
   const [lastExecutedCount, setLastExecutedCount] = useState<number>(0);
+
+  // Auto-recover from any stuck submitting or saving state if an action times out or is cancelled
+  useResetStuckAction(() => {
+    setTradeStatus((curr) => (curr === "submitting" ? "idle" : curr));
+    setCapitalSaving(false);
+  });
 
   const searchRef = useRef<HTMLDivElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
@@ -653,52 +660,66 @@ export default function TradeModal({
       setTradeError("You cannot trade right now because the stock market is closed.");
       return;
     }
-    if (!canSubmit) return;
+    if (basket.length === 0) {
+      setTradeStatus("error");
+      setTradeError("Please add at least one stock to your trade basket before submitting.");
+      return;
+    }
+    if (isOverCapital) {
+      setTradeStatus("error");
+      setTradeError(`Insufficient available capital. Shortfall: ${formatCurrency(shortfall)}.`);
+      return;
+    }
+    if (tradeStatus === "submitting") {
+      return;
+    }
 
     setTradeStatus("submitting");
     setTradeError("");
 
     try {
-      const alreadyExecutedToday = areSuggestionsExecutedToday();
-      const hadSuggestions = basket.some((o) => o.predicted && !alreadyExecutedToday);
-      await executeBatchTrade(
-        basket.map((o) => ({
-          ticker: o.ticker,
-          action: o.action,
-          quantity: o.quantity,
-          price: o.price,
-          ...((o.predicted && !alreadyExecutedToday) ? { predicted: true } : {}),
-        }))
-      );
+      await trackAction("Execute Trade Basket", async () => {
+        const alreadyExecutedToday = areSuggestionsExecutedToday();
+        const hadSuggestions = basket.some((o) => o.predicted && !alreadyExecutedToday);
+        await executeBatchTrade(
+          basket.map((o) => ({
+            ticker: o.ticker,
+            action: o.action,
+            quantity: o.quantity,
+            price: o.price,
+            ...((o.predicted && !alreadyExecutedToday) ? { predicted: true } : {}),
+          }))
+        );
 
-      // Optimistically update capital in cache and state
-      const nextCap = Math.max(0, postTradeBalance);
-      setAvailableCapital(nextCap);
-      setCachedData(CAPITAL_CACHE_KEY, nextCap);
-      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
-      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
-      sessionStorage.removeItem("analytics_data");
+        // Optimistically update capital in cache and state
+        const nextCap = Math.max(0, postTradeBalance);
+        setAvailableCapital(nextCap);
+        setCachedData(CAPITAL_CACHE_KEY, nextCap);
+        sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+        sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+        sessionStorage.removeItem("analytics_data");
 
-      setLastExecutedCount(basket.length);
-      setBasket([]);
-      setTradeStatus("success");
+        setLastExecutedCount(basket.length);
+        setBasket([]);
+        setTradeStatus("success");
 
-      if (hadSuggestions) {
-        markSuggestionsExecuted();
-        window.dispatchEvent(new CustomEvent("suggestions-executed"));
-      }
+        if (hadSuggestions) {
+          markSuggestionsExecuted();
+          window.dispatchEvent(new CustomEvent("suggestions-executed"));
+        }
 
-      // Notify other pages to refresh
-      window.dispatchEvent(new CustomEvent("trade-executed"));
-      window.dispatchEvent(new CustomEvent("capital-updated"));
+        // Notify other pages to refresh
+        window.dispatchEvent(new CustomEvent("trade-executed"));
+        window.dispatchEvent(new CustomEvent("capital-updated"));
 
-      // Auto close the trade modal after brief success presentation
-      if (autoCloseTimerRef.current) {
-        window.clearTimeout(autoCloseTimerRef.current);
-      }
-      autoCloseTimerRef.current = window.setTimeout(() => {
-        onClose();
-      }, 1200);
+        // Auto close the trade modal after brief success presentation
+        if (autoCloseTimerRef.current) {
+          window.clearTimeout(autoCloseTimerRef.current);
+        }
+        autoCloseTimerRef.current = window.setTimeout(() => {
+          onClose();
+        }, 1200);
+      });
     } catch (err) {
       setTradeStatus("error");
       setTradeError(err instanceof Error ? err.message : "Trade execution failed. Please try again.");
@@ -727,28 +748,30 @@ export default function TradeModal({
     setCapitalSaving(true);
     setCapitalError("");
     try {
-      await updateCapital(newCap);
-      setAvailableCapital(newCap);
-      setCachedData(CAPITAL_CACHE_KEY, newCap);
-      sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
-      sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
-      sessionStorage.removeItem("analytics_data");
-      setCapitalSuccess(true);
+      await trackAction("Update Capital", async () => {
+        await updateCapital(newCap);
+        setAvailableCapital(newCap);
+        setCachedData(CAPITAL_CACHE_KEY, newCap);
+        sessionStorage.removeItem(DASHBOARD_SUMMARY_CACHE_KEY);
+        sessionStorage.removeItem(HOLDINGS_CACHE_KEY);
+        sessionStorage.removeItem("analytics_data");
+        setCapitalSuccess(true);
 
-      // Notify other pages to refresh immediately
-      window.dispatchEvent(new CustomEvent("capital-updated"));
-      window.dispatchEvent(new CustomEvent("trade-executed"));
+        // Notify other pages to refresh immediately
+        window.dispatchEvent(new CustomEvent("capital-updated"));
+        window.dispatchEvent(new CustomEvent("trade-executed"));
 
-      // Auto close the trade modal
-      if (autoCloseTimerRef.current) {
-        window.clearTimeout(autoCloseTimerRef.current);
-      }
-      autoCloseTimerRef.current = window.setTimeout(() => {
-        setManagingCapital(false);
-        setCapitalDelta("");
-        setCapitalSuccess(false);
-        onClose();
-      }, 650);
+        // Auto close the trade modal
+        if (autoCloseTimerRef.current) {
+          window.clearTimeout(autoCloseTimerRef.current);
+        }
+        autoCloseTimerRef.current = window.setTimeout(() => {
+          setManagingCapital(false);
+          setCapitalDelta("");
+          setCapitalSuccess(false);
+          onClose();
+        }, 650);
+      });
     } catch {
       // Optimistic update
       setAvailableCapital(newCap);

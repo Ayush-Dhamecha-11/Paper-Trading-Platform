@@ -12,9 +12,11 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage.tsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.tsx";
 import ProfilePage from "./pages/ProfilePage.tsx";
 import PortfolioPage from "./pages/portfolio.tsx";
+import SimulationPage from "./pages/simulation.tsx";
 import { TradeModalProvider, useTradeModal } from "./context/TradeContext.tsx";
 import TradeFAB from "./components/TradeFAB/TradeFAB.tsx";
 import TradeModal from "./components/TradeModal/TradeModal.tsx";
+import ActionEscapeHatch from "./components/ActionEscapeHatch/ActionEscapeHatch.tsx";
 import {
   DASHBOARD_SUMMARY_CACHE_KEY,
   DASHBOARD_STOCKS_CACHE_KEY,
@@ -24,6 +26,27 @@ import {
   ANALYTICS_CACHE_KEY,
   SUGGESTIONS_CACHE_KEY,
 } from "./utils/dataCache.ts";
+
+function PublicAuthGate({
+  isAuthenticated,
+  children,
+}: {
+  readonly isAuthenticated: boolean;
+  readonly children: React.ReactNode;
+}) {
+  const location = useLocation();
+  const hasCode = new URLSearchParams(location.search).get("code");
+
+  if (hasCode) {
+    console.log(
+      `%c[Google OAuth Redirect Detected] 🌐 Intercepted code on "${location.pathname}${location.search}"`,
+      "color: #00d2ff; font-weight: bold; background: rgba(0, 210, 255, 0.1); padding: 3px 6px; border-radius: 4px;"
+    );
+    return <GoogleCallbackPage />;
+  }
+
+  return isAuthenticated ? <Navigate to="/dashboard" replace /> : <>{children}</>;
+}
 
 function DashboardGate({ isAuthenticated }: { readonly isAuthenticated: boolean }) {
   const location = useLocation();
@@ -94,35 +117,32 @@ function App() {
 
   return (
     <TradeModalProvider>
+      {/* Global Stuck Action Watchdog Escape Hatch — visible if any action hangs > 4s */}
+      <ActionEscapeHatch />
+
       <Routes>
         <Route
           path="/"
           element={
-            isAuthenticated ? (
-              <Navigate to="/dashboard" replace />
-            ) : (
+            <PublicAuthGate isAuthenticated={isAuthenticated}>
               <LoginPage onAuthSuccess={() => setIsAuthenticated(true)} />
-            )
+            </PublicAuthGate>
           }
         />
         <Route
           path="/login"
           element={
-            isAuthenticated ? (
-              <Navigate to="/dashboard" replace />
-            ) : (
+            <PublicAuthGate isAuthenticated={isAuthenticated}>
               <LoginPage onAuthSuccess={() => setIsAuthenticated(true)} />
-            )
+            </PublicAuthGate>
           }
         />
         <Route
           path="/signup"
           element={
-            isAuthenticated ? (
-              <Navigate to="/dashboard" replace />
-            ) : (
+            <PublicAuthGate isAuthenticated={isAuthenticated}>
               <SignupPage onAuthSuccess={() => setIsAuthenticated(true)} />
-            )
+            </PublicAuthGate>
           }
         />
         <Route path="/register/callback" element={<AuthCallbackPage />} />
@@ -134,6 +154,7 @@ function App() {
         <Route path="/dashboard" element={<DashboardGate isAuthenticated={isAuthenticated} />} />
         <Route path="/analytics" element={isAuthenticated ? <AnalyticsPage /> : <Navigate to="/login" replace />} />
         <Route path="/portfolio" element={isAuthenticated ? <PortfolioPage /> : <Navigate to="/login" replace />} />
+        <Route path="/simulation" element={isAuthenticated ? <SimulationPage /> : <Navigate to="/login" replace />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
 

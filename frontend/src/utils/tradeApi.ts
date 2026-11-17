@@ -1,7 +1,6 @@
 import type { Stock } from "../data/stocksData";
-import { STOCK_UNIVERSE } from "../data/stocksData";
 import { authenticatedFetch, getBackendBaseUrl, logBackendResponse } from "./authUtils";
-import { DASHBOARD_STOCKS_CACHE_KEY, SUGGESTIONS_CACHE_KEY, getCachedData, setCachedData } from "./dataCache";
+import { SUGGESTIONS_CACHE_KEY, getCachedData, setCachedData } from "./dataCache";
 import { isMarketClosed } from "./marketUtils";
 
 export type TradeAction = "buy" | "sell";
@@ -22,7 +21,6 @@ export type TradeResult = {
 
 /**
  * Submit a buy or sell order to the backend.
- * NOTE: The API endpoint URL will be updated by the backend team when ready.
  */
 export async function executeTrade(payload: TradePayload): Promise<TradeResult> {
   const response = await authenticatedFetch(
@@ -32,7 +30,8 @@ export async function executeTrade(payload: TradePayload): Promise<TradeResult> 
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }
+    },
+    "Execute Trade"
   );
   logBackendResponse(response, "POST /api/trade/execute");
 
@@ -60,7 +59,8 @@ export async function executeBatchTrade(orders: TradePayload[]): Promise<TradeRe
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ orders }),
-    }
+    },
+    "Execute Batch Trade"
   );
   logBackendResponse(response, "POST /api/trade/batch");
 
@@ -82,7 +82,6 @@ export async function executeBatchTrade(orders: TradePayload[]): Promise<TradeRe
 
 /**
  * Update the user's available capital.
- * NOTE: The API endpoint URL will be updated by the backend team when ready.
  */
 export async function updateCapital(newCapital: number): Promise<void> {
   const response = await authenticatedFetch(
@@ -92,7 +91,8 @@ export async function updateCapital(newCapital: number): Promise<void> {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ capital: newCapital }),
-    }
+    },
+    "Update Capital"
   );
   logBackendResponse(response, "PATCH /api/profile/capital");
 
@@ -108,6 +108,7 @@ export type TradeSuggestion = {
   action: "buy" | "sell";
   quantity: number;
   price: number;
+  weight?: number;
   status: "pending" | "executed";
   executedAt?: string;
   is_executed?: boolean;
@@ -115,166 +116,140 @@ export type TradeSuggestion = {
   predicted?: boolean;
 };
 
-// Fallback dummy suggestions blueprint (quantity > 0, not executed)
-const DEFAULT_SUGGESTION_CONFIGS: Omit<TradeSuggestion, "price">[] = [
-  {
-    id: "sug_1",
-    ticker: "TCS",
-    name: "Tata Consultancy Services",
-    action: "buy",
-    quantity: 2,
-    status: "pending",
-    is_executed: false,
-    executed: false,
-  },
-  {
-    id: "sug_2",
-    ticker: "ITC",
-    name: "ITC Limited",
-    action: "sell",
-    quantity: 15,
-    status: "pending",
-    is_executed: false,
-    executed: false,
-  },
-  {
-    id: "sug_3",
-    ticker: "RELIANCE",
-    name: "Reliance Industries",
-    action: "buy",
-    quantity: 3,
-    status: "pending",
-    is_executed: false,
-    executed: false,
-  },
-  {
-    id: "sug_4",
-    ticker: "HDFCBANK",
-    name: "HDFC Bank",
-    action: "sell",
-    quantity: 5,
-    status: "pending",
-    is_executed: false,
-    executed: false,
-  },
-];
+// Singleton in-flight promise to prevent firing duplicate suggestions requests
+let suggestionsInFlightPromise: Promise<TradeSuggestion[]> | null = null;
 
 /**
- * Fetches today's trade suggestions from the backend.
- * Reuses live stock prices from the 1st stock API call (passed in or retrieved from cache)
- * without making redundant stock network requests.
- * When the backend suggestions endpoint is ready, it uses the backend's prices and data directly.
+ * Helper to check if a cached suggestion list is actually legacy dummy data.
  */
-export async function fetchDailySuggestions(availableStocks?: Stock[]): Promise<TradeSuggestion[]> {
-  try {
-    const response = await authenticatedFetch(
-      `${getBackendBaseUrl()}/api/strategy/suggestions`,
-      { credentials: "include" }
-    );
-    logBackendResponse(response, "GET /api/strategy/suggestions");
-    if (response.ok) {
-      let data: unknown;
-      try {
-        const rawText = await response.text();
+export function isDummySuggestionList(list?: TradeSuggestion[] | null): boolean {
+  if (!list || !Array.isArray(list) || list.length === 0) return false;
+  return list.some((s) => s.id === "sug_1" || s.id === "sug_2" || s.id === "sug_3");
+}
+
+/**
+ * Fetches today's trade suggestions from the backend with in-flight deduplication.
+ * Returns the real backend suggestions or empty array ([]). Never returns fake dummy data.
+ */
+export function fetchDailySuggestions(_availableStocks?: Stock[]): Promise<TradeSuggestion[]> {
+  if (suggestionsInFlightPromise !== null) {
+    return suggestionsInFlightPromise;
+  }
+
+  suggestionsInFlightPromise = (async (): Promise<TradeSuggestion[]> => {
+    try {
+      const response = await authenticatedFetch(
+        `${getBackendBaseUrl()}/api/strategy/suggestions`,
+        { credentials: "include" },
+        "Daily Strategy Suggestions"
+      );
+
+      if (response.ok) {
+        let data: unknown;
         try {
-          data = JSON.parse(rawText);
-        } catch (err) {
-          data = rawText;
+          const rawText = await response.text();
+          try {
+            data = JSON.parse(rawText);
+          } catch {
+            data = rawText;
+          }
+        } catch {
+          data = await response.json().catch(() => null);
         }
-      } catch (streamErr) {
-        console.warn("[fetchDailySuggestions] Stream reading error, falling back to json():", streamErr);
-        data = await response.json();
-      }
 
-      if (typeof data === "string") {
-        try {
-          data = JSON.parse(data);
-        } catch (err) {
-          // ignore
+        if (typeof data === "string") {
+          try {
+            data = JSON.parse(data);
+          } catch {
+            // ignore
+          }
         }
-      }
-      let candidateList: unknown[] = [];
-      if (Array.isArray(data)) {
-        candidateList = data;
-      } else if (data && typeof data === "object") {
-        const obj = data as Record<string, unknown>;
-        const list = obj.suggestions ?? obj.data ?? obj.trades ?? obj.results ?? obj.items;
-        if (Array.isArray(list)) {
-          candidateList = list;
+
+        let candidateList: unknown[] = [];
+        if (Array.isArray(data)) {
+          candidateList = data;
+        } else if (data && typeof data === "object") {
+          const obj = data as Record<string, unknown>;
+          const list = obj.suggestions ?? obj.data ?? obj.trades ?? obj.results ?? obj.items;
+          if (Array.isArray(list)) {
+            candidateList = list;
+          }
         }
-      }
 
-      const valid: TradeSuggestion[] = candidateList
-        .map((rawItem, idx) => {
-          if (!rawItem || typeof rawItem !== "object") return null;
-          const item = rawItem as Record<string, unknown>;
-          const ticker = String(item.ticker ?? "").trim().toUpperCase();
-          if (!ticker) return null;
+        const valid: TradeSuggestion[] = candidateList
+          .map((rawItem, idx) => {
+            if (!rawItem || typeof rawItem !== "object") return null;
+            const item = rawItem as Record<string, unknown>;
+            const ticker = String(item.ticker ?? "").trim().toUpperCase();
+            if (!ticker) return null;
 
-          const rawQty = item.quantity;
-          const quantity =
-            typeof rawQty === "number"
-              ? rawQty
-              : parseFloat(String(rawQty ?? "0")) || 0;
+            const rawQty = item.quantity;
+            const quantity =
+              typeof rawQty === "number"
+                ? rawQty
+                : parseFloat(String(rawQty ?? "0")) || 0;
 
-          const rawPrice = item.price;
-          const price =
-            typeof rawPrice === "number"
-              ? rawPrice
-              : parseFloat(String(rawPrice ?? "0")) || 0;
+            const rawPrice = item.price;
+            const price =
+              typeof rawPrice === "number"
+                ? rawPrice
+                : parseFloat(String(rawPrice ?? "0")) || 0;
 
-          const rawAction = String(item.action ?? "buy").toLowerCase().trim();
-          const action: "buy" | "sell" = rawAction === "sell" ? "sell" : "buy";
+            const rawAction = String(item.action ?? "buy").toLowerCase().trim();
+            const action: "buy" | "sell" = rawAction === "sell" ? "sell" : "buy";
 
-          return {
-            id: String(item.id ?? `sug_${ticker}_${idx}_${Date.now()}`),
-            ticker,
-            name: String(item.name ?? ticker),
-            action,
-            quantity,
-            price,
-            status: (item.status === "executed" ? "executed" : "pending") as "pending" | "executed",
-            executedAt: item.executedAt ? String(item.executedAt) : undefined,
-            is_executed: Boolean(item.is_executed || item.executed),
-            executed: Boolean(item.executed || item.is_executed),
-            predicted: Boolean(item.predicted ?? true),
-          };
-        })
-        .filter((item): item is TradeSuggestion => item !== null && item.quantity > 0 && item.price > 0);
+            const rawWeight =
+              item.weight ??
+              item.weight_pct ??
+              item.weightPct ??
+              item.weight_percentage ??
+              item.percentage_weight;
+            const parsedWeight =
+              typeof rawWeight === "number"
+                ? rawWeight
+                : typeof rawWeight === "string" && rawWeight.trim() !== ""
+                ? parseFloat(rawWeight.replace("%", "").trim())
+                : undefined;
+            const weight =
+              typeof parsedWeight === "number" && !isNaN(parsedWeight)
+                ? parsedWeight
+                : undefined;
 
-      if (valid.length > 0) {
+            return {
+              id: String(item.id ?? `sug_${ticker}_${idx}_${Date.now()}`),
+              ticker,
+              name: String(item.name ?? ticker),
+              action,
+              quantity,
+              price,
+              weight,
+              status: (item.status === "executed" ? "executed" : "pending") as "pending" | "executed",
+              executedAt: item.executedAt ? String(item.executedAt) : undefined,
+              is_executed: Boolean(item.is_executed || item.executed),
+              executed: Boolean(item.executed || item.is_executed),
+              predicted: Boolean(item.predicted ?? true),
+            };
+          })
+          .filter((item): item is TradeSuggestion => item !== null && item.quantity > 0 && item.price > 0);
+
         setCachedData(SUGGESTIONS_CACHE_KEY, valid);
         return valid;
       }
+    } catch (err) {
+      console.error("[fetchDailySuggestions] Error fetching suggestions:", err);
     }
-  } catch (err) {
-    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
-    // If backend endpoint is not ready or network fails, fallback to dummy suggestions
-  }
 
-  // Fallback: reuse the stock prices from the 1st stocks call (do not make a separate network call)
-  const stocksPool: Stock[] =
-    availableStocks && availableStocks.length > 0
-      ? availableStocks
-      : getCachedData<Stock[]>(DASHBOARD_STOCKS_CACHE_KEY) ?? [];
+    // Return cached real suggestions if available, otherwise return empty list
+    const cached = getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY);
+    if (cached && !isDummySuggestionList(cached)) {
+      return cached;
+    }
+    return [];
+  })().finally(() => {
+    suggestionsInFlightPromise = null;
+  });
 
-  return DEFAULT_SUGGESTION_CONFIGS.map((item) => {
-    const liveStock = stocksPool.find(
-      (s) => s.ticker.toUpperCase() === item.ticker.toUpperCase()
-    );
-    const fallbackStock = STOCK_UNIVERSE.find(
-      (s) => s.ticker.toUpperCase() === item.ticker.toUpperCase()
-    );
-
-    return {
-      ...item,
-      status: "pending" as const,
-      is_executed: false,
-      executed: false,
-      name: liveStock?.name ?? fallbackStock?.name ?? item.name,
-      price: liveStock?.price ?? fallbackStock?.price ?? 1000,
-    };
-  }).filter((s) => s.quantity > 0 && s.price > 0);
+  return suggestionsInFlightPromise;
 }
 
 export const SUGGESTIONS_EXECUTED_KEY = "strategy_suggestions_executed";
@@ -283,7 +258,7 @@ export function getTodayDateString(): string {
   try {
     return new Date().toISOString().slice(0, 10);
   } catch (err) {
-    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
+    console.error("[getTodayDateString] Exception formatting date:", err);
     return "today";
   }
 }
@@ -302,7 +277,7 @@ export function areSuggestionsExecutedToday(): boolean {
       sessionStorage.getItem(SUGGESTIONS_EXECUTED_KEY);
     return storedFlag === "true" || storedFlag === today;
   } catch (err) {
-    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
+    console.error("[areSuggestionsExecutedToday] Exception checking executed status:", err);
     return false;
   }
 }
@@ -315,14 +290,12 @@ export function markSuggestionsExecuted(): void {
     sessionStorage.setItem(`${SUGGESTIONS_EXECUTED_KEY}_date`, today);
     sessionStorage.setItem(SUGGESTIONS_EXECUTED_KEY, "true");
   } catch (err) {
-    console.error("[fetchDailySuggestions] Exception fetching suggestions:", err);
-    // Ignore storage errors
+    console.error("[markSuggestionsExecuted] Exception storing executed status:", err);
   }
 }
 
 /**
  * Execute suggestions as-is directly without manual edits.
- * Bypasses frontend guards because backend already validated this plan.
  */
 export async function executeSuggestionsAsIs(suggestions: TradeSuggestion[]): Promise<TradeResult> {
   if (isMarketClosed()) {
@@ -338,5 +311,3 @@ export async function executeSuggestionsAsIs(suggestions: TradeSuggestion[]): Pr
   }));
   return executeBatchTrade(orders);
 }
-
-

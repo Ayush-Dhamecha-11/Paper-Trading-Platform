@@ -141,18 +141,29 @@ const ANALYTICS_HOLDINGS = [
   },
 ];
 
-const SECTOR_COLORS: Record<string, string> = {
-  Banking: "#5996eb",
-  IT: "#24c6dc",
-  Energy: "#20d89b",
-  FMCG: "#f5b942",
-  Pharma: "#f56b6b",
-  Power: "#fb923c",
-  Cement: "#aa3bff",
-  Automobile: "#38bdf8",
-  Metals: "#ff7b87",
-  Infrastructure: "#a78bfa",
-  Consumer: "#4ade80",
+export const SECTOR_COLORS: Record<string, string> = {
+  Banking: "#3b82f6",         // Royal Blue
+  IT: "#00e5ff",              // Electric Cyan
+  Energy: "#10b981",          // Emerald Mint
+  FMCG: "#f59e0b",            // Amber Gold
+  Pharma: "#ec4899",          // Hot Pink
+  Automobile: "#8b5cf6",      // Vivid Violet
+  Consumer: "#ff6d00",        // Deep Tangerine Orange
+  Power: "#eab308",           // Golden Yellow
+  Metals: "#a855f7",          // Deep Neon Purple
+  Healthcare: "#ef4444",      // Crimson Red
+  Cement: "#14b8a6",          // Teal
+  Infrastructure: "#84cc16",  // Lime Green
+  Financial_Services: "#6366f1", // Indigo
+  Defence: "#0ea5e9",         // Sky Blue
+  Real_Estate: "#d946ef",     // Electric Magenta
+  Telecom: "#2dd4bf",         // Aquamarine
+  Hospitality: "#e11d48",     // Ruby Red
+  Chemicals: "#f97316",       // Sunset Orange
+  Capital_Goods: "#fb7185",   // Salmon Rose
+  Retail: "#a21caf",          // Plum
+  Logistics: "#06b6d4",       // Deep Cyan
+  Conglomerate: "#c084fc",    // Lilac Lavender
 };
 
 const SECTOR_ORDER = ["Banking", "IT", "Energy", "FMCG", "Pharma"];

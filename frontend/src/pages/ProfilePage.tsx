@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Header from "../components/Header";
 import { showAppAlert } from "../utils/alertConfig";
+import { trackAction, useResetStuckAction } from "../utils/actionWatchdog";
 import {
   getBackendBaseUrl,
   authenticatedFetch,
@@ -62,6 +63,13 @@ export default function ProfilePage() {
     confirmPassword: "",
   });
   const [activeSection, setActiveSection] = useState<ProfileSectionKey>("profile");
+
+  // Auto-recover buttons if an action stalls or is cancelled
+  useResetStuckAction(() => {
+    setNameSaving(false);
+    setPasswordLoading(false);
+    setPreferenceSaving(false);
+  });
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -225,32 +233,34 @@ export default function ProfilePage() {
     setNameSaving(true);
 
     try {
-      const response = await authenticatedFetch(`${getBackendBaseUrl()}/api/name`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({ new_name: nextName }),
-      });
+      await trackAction("Update Profile Name", async () => {
+        const response = await authenticatedFetch(`${getBackendBaseUrl()}/api/name`, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ new_name: nextName }),
+        });
 
-      logBackendResponse(response, "POST /api/name");
-      const data = await response.json().catch(() => ({}));
+        logBackendResponse(response, "POST /api/name");
+        const data = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
-        throw new Error(data.detail || data.message || "Unable to update your name.");
-      }
+        if (!response.ok) {
+          throw new Error(data.detail || data.message || "Unable to update your name.");
+        }
 
-      const storedUserInfo = getStoredUserInfo() ?? {};
-      setStoredUserInfo({ ...storedUserInfo, name: nextName });
-      setName(nextName);
-      setIsEditing(false);
-      showAppAlert({
-        title: "Success",
-        text: data.message || "Name updated successfully.",
-        type: "success",
-        timer: 2200,
+        const storedUserInfo = getStoredUserInfo() ?? {};
+        setStoredUserInfo({ ...storedUserInfo, name: nextName });
+        setName(nextName);
+        setIsEditing(false);
+        showAppAlert({
+          title: "Success",
+          text: data.message || "Name updated successfully.",
+          type: "success",
+          timer: 2200,
+        });
       });
     } catch (error) {
       showAppAlert({
@@ -291,49 +301,39 @@ export default function ProfilePage() {
       return;
     }
 
-    // const { accessToken, refreshToken } = getStoredAuthTokens();
-
-    // if (!accessToken && !refreshToken) {
-    //   showAppAlert({
-    //     title: "Error",
-    //     text: "Your session token is missing. Please log in again.",
-    //     type: "error",
-    //     timer: 2400,
-    //   });
-    //   return;
-    // }
-
     setPasswordLoading(true);
 
     try {
-      console.debug("[ProfilePage] Updating password");
-      const response = await authenticatedFetch(`${getBackendBaseUrl()}/api/password`, {
-        credentials: "include",
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          old_password: passwordForm.currentPassword,
-          new_password: passwordForm.newPassword,
-        }),
-      });
+      await trackAction("Update Password", async () => {
+        console.debug("[ProfilePage] Updating password");
+        const response = await authenticatedFetch(`${getBackendBaseUrl()}/api/password`, {
+          credentials: "include",
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            old_password: passwordForm.currentPassword,
+            new_password: passwordForm.newPassword,
+          }),
+        });
 
-      logBackendResponse(response, "POST /api/password");
-      const data = await response.json().catch(() => ({}));
+        logBackendResponse(response, "POST /api/password");
+        const data = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
-        throw new Error(data.detail || data.message || "Unable to update password.");
-      }
+        if (!response.ok) {
+          throw new Error(data.detail || data.message || "Unable to update password.");
+        }
 
-      setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
-      setIsPasswordEditing(false);
-      showAppAlert({
-        title: "Success",
-        text: data.message || "Password updated successfully.",
-        type: "success",
-        timer: 2400,
+        setPasswordForm({ currentPassword: "", newPassword: "", confirmPassword: "" });
+        setIsPasswordEditing(false);
+        showAppAlert({
+          title: "Success",
+          text: data.message || "Password updated successfully.",
+          type: "success",
+          timer: 2400,
+        });
       });
     } catch (error) {
       console.error("[ProfilePage] Password update failed", error);
