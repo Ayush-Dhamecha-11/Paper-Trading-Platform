@@ -8,3 +8,8 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),  
     os.getenv("SUPABASE_ANON_KEY"),
 )
+
+admin_supabase: Client = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
+)
