@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def run(target_date: date | None = None) -> None:
     target_date = target_date or today_ist()
-    """
+    
     logger.info("--- Daily CRON job starting for %s ---", target_date)
 
     fetcher = HistDataFetcher()
@@ -51,16 +51,16 @@ def run(target_date: date | None = None) -> None:
     finally:
         db.close()
 
-    #if has_prices:
-    written, _ = compute_for_date(target_date)
-    logger.info(
-        "[4/5] characteristics computation complete for %s - %s rows written",
-        target_date,
-        written,
-        )
-    #else:
-    #    logger.info("[4/5] no characteristics generated for non-trading day %s", target_date)
-    """
+    if has_prices:
+        written, _ = compute_for_date(target_date)
+        logger.info(
+            "[4/5] characteristics computation complete for %s - %s rows written",
+            target_date,
+            written,
+            )
+    else:
+        logger.info("[4/5] no characteristics generated for non-trading day %s", target_date)
+    
     predicted = predict_next_day_portfolio(target_date)
     for key in predicted.keys():
         logger.info("[5/5] next-day portfolio prediction complete for %s - %s config", target_date, key)
@@ -70,7 +70,7 @@ def run(target_date: date | None = None) -> None:
 
 if __name__ == "__main__":
     try:
-        run(datetime(2026, 10, 13))
+        run()
     except Exception:
         logger.exception("Daily pipeline failed")
         sys.exit(1)

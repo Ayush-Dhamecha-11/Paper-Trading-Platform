@@ -24,7 +24,6 @@ Key Trading & Operational Rules:
 
 from __future__ import annotations
 
-import argparse
 import logging
 import math
 import sys
@@ -919,21 +918,8 @@ if __name__ == "__main__":
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-
-    parser = argparse.ArgumentParser(description="Paper Trading Platform - Auto-Trade Cron Job")
-    parser.add_argument("--force", action="store_true", help="Force execution even if market is closed")
-    parser.add_argument("--dry-run", action="store_true", help="Calculate trades and capital without executing")
-    parser.add_argument("--daemon", action="store_true", help="Run continuously as a background daemon scheduler")
-    args = parser.parse_args()
-
-    if args.daemon:
-        scheduler = start_auto_trade_scheduler()
-        try:
-            while True:
-                time_module.sleep(1)
-        except KeyboardInterrupt:
-            stop_auto_trade_scheduler()
-    else:
-        result = run_auto_trade_job(force=args.force, dry_run=args.dry_run)
-        print("\n=== Auto-Trade Execution Result ===")
-        print(result)
+    try:
+        run_auto_trade_job()
+    except Exception:
+        logger.exception("Auto-trade job failed")
+        sys.exit(1)

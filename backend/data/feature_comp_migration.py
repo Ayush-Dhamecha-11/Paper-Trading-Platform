@@ -576,10 +576,10 @@ def backfill_all(start_date: date, end_date: date) -> tuple[int, int]:
 
 
 def main():
-    backfill = False
+    backfill = True
 
     if backfill:
-        end_date = datetime(2026, 10, 12)
+        end_date = datetime(2026, 11, 16)
         start_date = datetime(2011, 12, 1)
         written, _ = backfill_all(start_date, end_date)
     else:
