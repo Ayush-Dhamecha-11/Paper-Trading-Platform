@@ -5,8 +5,6 @@ export type ActiveActionInfo = {
   id: string;
   name: string;
   startTime: number;
-  timeoutMs: number;
-  timerId: ReturnType<typeof setTimeout> | null;
   abortController?: AbortController;
 };
 
@@ -23,7 +21,7 @@ function notifyListeners() {
     try {
       listener(currentList);
     } catch (e) {
-      console.error("[ActionWatchdog] Error notifying listener:", e);
+      console.error("[ActionTracker] Error notifying listener:", e);
     }
   });
 }
@@ -47,18 +45,14 @@ export function getActiveActions(): ActiveActionInfo[] {
 }
 
 /**
- * Starts tracking a user action (e.g. a button click or form submit).
- * If the action exceeds maxDurationMs without completing, it automatically:
- * 1. Aborts any pending network request associated with the action controller.
- * 2. Emits "reset-stuck-buttons" to unfreeze all buttons and spinners.
- * 3. Shows a user-facing alert so the user knows what happened.
+ * Tracks a user action (e.g. a button click or form submit).
+ * Keeps a live timer running so you can verify the request went out and see
+ * how long it takes, WITHOUT ever timing out or blocking the request.
  */
 export function startActionWatchdog(
   actionName: string,
   options: {
-    maxDurationMs?: number;
     abortController?: AbortController;
-    onTimeout?: () => void;
   } = {}
 ): {
   actionId: string;
@@ -66,57 +60,18 @@ export function startActionWatchdog(
   stop: () => void;
 } {
   const actionId = `action_${++actionCounter}_${Date.now()}`;
-  const timeoutMs = options.maxDurationMs ?? 15000; // 15 seconds max safety timeout
   const controller = options.abortController ?? new AbortController();
   const startTime = Date.now();
 
   console.log(
-    `%c[User Action] 🖱️ Started: "${actionName}" at ${new Date().toLocaleTimeString()} (Watchdog: ${timeoutMs / 1000}s)`,
+    `%c[User Action Tracker] 🚀 Started: "${actionName}" at ${new Date().toLocaleTimeString()} | Request sent`,
     "color: #00d2ff; font-weight: bold; background: rgba(0, 210, 255, 0.1); padding: 2px 6px; border-radius: 4px;"
   );
-
-  const timerId = setTimeout(() => {
-    console.warn(
-      `%c[Action Watchdog] ⚠️ Action "${actionName}" exceeded ${timeoutMs / 1000}s! Backend did not respond or action stalled. Auto-recovering UI...`,
-      "color: #f59e0b; font-weight: bold; background: rgba(245, 158, 11, 0.15); padding: 4px 8px; border-radius: 4px;"
-    );
-
-    // Abort network request
-    try {
-      controller.abort();
-    } catch {}
-
-    // Remove from active
-    activeActions.delete(actionId);
-    notifyListeners();
-
-    // Notify all components to reset stuck loading states
-    window.dispatchEvent(
-      new CustomEvent("reset-stuck-buttons", {
-        detail: { actionName, actionId, timedOut: true },
-      })
-    );
-
-    // Optional timeout callback
-    try {
-      options.onTimeout?.();
-    } catch {}
-
-    // Alert user so they are not left wondering
-    showAppAlert({
-      title: "Action Timed Out",
-      text: `"${actionName}" took longer than expected and backend did not respond. The button has been unlocked so you can try again.`,
-      type: "warning",
-      timer: 3500,
-    });
-  }, timeoutMs);
 
   const actionInfo: ActiveActionInfo = {
     id: actionId,
     name: actionName,
     startTime,
-    timeoutMs,
-    timerId,
     abortController: controller,
   };
 
@@ -126,15 +81,12 @@ export function startActionWatchdog(
   const stop = () => {
     const active = activeActions.get(actionId);
     if (active) {
-      if (active.timerId) {
-        clearTimeout(active.timerId);
-      }
       activeActions.delete(actionId);
       notifyListeners();
 
       const elapsed = Date.now() - startTime;
       console.log(
-        `%c[User Action] ✅ Completed: "${actionName}" in ${elapsed}ms`,
+        `%c[User Action Tracker] 🏁 Completed: "${actionName}" in ${elapsed}ms (${(elapsed / 1000).toFixed(1)}s)`,
         "color: #20d89b; font-weight: bold; background: rgba(32, 216, 155, 0.1); padding: 2px 6px; border-radius: 4px;"
       );
     }
@@ -145,26 +97,23 @@ export function startActionWatchdog(
 
 /**
  * Universal async execution wrapper.
- * Ensures the action is registered with the watchdog, catches any unhandled error,
- * guarantees loading cleanup, and displays a user notification on failure.
+ * Tracks when the action started and finished with timer metrics, catches unhandled errors,
+ * and guarantees loading state cleanup WITHOUT ever aborting or blocking on timeout.
  */
 export async function trackAction<T>(
   actionName: string,
   fn: (controller: AbortController) => Promise<T>,
   options: {
-    maxDurationMs?: number;
     onError?: (error: unknown) => void;
   } = {}
 ): Promise<T> {
-  const { controller, stop } = startActionWatchdog(actionName, {
-    maxDurationMs: options.maxDurationMs,
-  });
+  const { controller, stop } = startActionWatchdog(actionName);
 
   try {
     return await fn(controller);
   } catch (error) {
     console.error(
-      `%c[User Action Failed] ❌ "${actionName}" threw an error:`,
+      `%c[User Action Error] ❌ "${actionName}" failed:`,
       "color: #ff5e6d; font-weight: bold; background: rgba(255, 94, 109, 0.1); padding: 2px 6px; border-radius: 4px;",
       error
     );
@@ -204,9 +153,6 @@ export function resetAllStuckActions(reason = "user_cancel"): void {
   );
 
   activeActions.forEach((action) => {
-    if (action.timerId) {
-      clearTimeout(action.timerId);
-    }
     try {
       action.abortController?.abort();
     } catch {}

@@ -60,7 +60,6 @@ export default function GoogleCallbackPage() {
               Accept: "application/json",
             },
             credentials: "include",
-            timeoutMs: 15000,
           },
           "GET /auth/google/callback"
         );

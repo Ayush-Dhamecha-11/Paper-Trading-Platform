@@ -121,7 +121,6 @@ export default function SimulationPage() {
           }
         },
         {
-          maxDurationMs: 40000, // Simulation can take up to 40 seconds
           onError: (err) => {
             setValidationError(err instanceof Error ? err.message : "Simulation failed to execute.");
           },

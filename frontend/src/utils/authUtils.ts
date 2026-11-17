@@ -15,8 +15,8 @@ export type StoredUserInfo = {
 export const getBackendBaseUrl = () =>
   String(
     import.meta.env.VITE_BACKEND_URL ||
-      import.meta.env.BACKEND_URL ||
-      "http://localhost:8000"
+    import.meta.env.BACKEND_URL ||
+    "http://localhost:8000"
   ).replace(/\/$/, "");
 
 export const logBackendRequest = (
@@ -67,10 +67,10 @@ export const logBackendResponse = (
         } catch {
           console.log("📦 Body (text):", body.length > 500 ? body.slice(0, 500) + "..." : body);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }
     console.groupEnd();
-  } catch {}
+  } catch { }
 };
 
 export type AuthenticatedFetchInit = RequestInit & {
@@ -78,49 +78,14 @@ export type AuthenticatedFetchInit = RequestInit & {
 };
 
 /**
- * Executes a fetch request guarded with an AbortController timeout.
- * Guarantees that stalled network connections or hung backend threads will not
- * hang the browser or UI indefinitely.
+ * Executes a fetch request directly without blocking or aborting on timeouts,
+ * ensuring requests are never terminated prematurely while logging duration metrics.
  */
 export const fetchWithTimeout = async (
   input: RequestInfo | URL,
-  init: RequestInit = {},
-  timeoutMs = 25000
+  init: RequestInit = {}
 ): Promise<Response> => {
-  const controller = new AbortController();
-  const existingSignal = init.signal;
-
-  if (existingSignal) {
-    if (existingSignal.aborted) {
-      controller.abort();
-    } else {
-      existingSignal.addEventListener("abort", () => controller.abort());
-    }
-  }
-
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(
-        new Error(
-          `Network request timed out after ${Math.round(timeoutMs / 1000)}s. Backend did not respond.`
-        )
-      );
-    }, timeoutMs);
-  });
-
-  try {
-    const response = await Promise.race([
-      fetch(input, { ...init, signal: controller.signal }),
-      timeoutPromise,
-    ]);
-    return response;
-  } finally {
-    if (timer !== null) {
-      clearTimeout(timer);
-    }
-  }
+  return fetch(input, init);
 };
 
 const refreshSession = async () => {
@@ -133,15 +98,11 @@ const refreshSession = async () => {
   logBackendRequest("POST", refreshUrl, reqId, "Session Refresh");
   const startTime = performance.now();
 
-  refreshRequest = fetchWithTimeout(
-    refreshUrl,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    },
-    10000 // 10s max for auth refresh to prevent deadlocking future requests
-  )
+  refreshRequest = fetch(refreshUrl, {
+    method: "POST",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  })
     .then((response) => {
       const elapsedMs = Math.round(performance.now() - startTime);
       logBackendResponse(response, "POST /auth/refresh", elapsedMs, reqId);
@@ -177,8 +138,8 @@ export const authenticatedFetch = async (
     typeof input === "string"
       ? input
       : input instanceof URL
-      ? input.toString()
-      : input.url;
+        ? input.toString()
+        : input.url;
 
   let friendlyName = requestLabel;
   if (!friendlyName) {
@@ -192,12 +153,11 @@ export const authenticatedFetch = async (
 
   logBackendRequest(method, rawUrl, reqId, friendlyName);
   const startTime = performance.now();
-  const timeoutMs = init.timeoutMs ?? 25000;
 
   const requestInit = { ...init, credentials: "include" as RequestCredentials };
   let response: Response;
   try {
-    response = await fetchWithTimeout(input, requestInit, timeoutMs);
+    response = await fetch(input, requestInit);
   } catch (error) {
     const elapsedMs = Math.round(performance.now() - startTime);
     console.error(
@@ -219,7 +179,7 @@ export const authenticatedFetch = async (
     console.log(`[Backend request #${reqId}] 🔄 Retrying ${friendlyName} after token refresh...`);
     const retryStartTime = performance.now();
     try {
-      const retryResponse = await fetchWithTimeout(input, requestInit, timeoutMs);
+      const retryResponse = await fetch(input, requestInit);
       const retryElapsedMs = Math.round(performance.now() - retryStartTime);
       logBackendResponse(retryResponse, `${friendlyName} (retry)`, retryElapsedMs, reqId);
 
@@ -248,8 +208,8 @@ export const startSilentSessionRefresh = () => {
 export const hasStoredAuth = () =>
   Boolean(
     localStorage.getItem(AUTH_TOKEN_KEY) ||
-      localStorage.getItem(AUTH_SESSION_KEY) ||
-      localStorage.getItem(REFRESH_TOKEN_KEY)
+    localStorage.getItem(AUTH_SESSION_KEY) ||
+    localStorage.getItem(REFRESH_TOKEN_KEY)
   );
 
 export const setStoredAuthToken = (token: string, refreshToken?: string) => {
@@ -313,7 +273,6 @@ export const logoutUser = async ({
         method: "POST",
         credentials: "include",
         headers: { Accept: "application/json" },
-        timeoutMs: 5000,
       },
       `POST ${normalizedEndpoint}`
     );

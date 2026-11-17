@@ -142,7 +142,7 @@ export default function AuthPage({
       });
 
       logBackendRequest(method, queryUrl.toString(), undefined, `${method} ${normalizedEndpoint}`);
-      return fetchWithTimeout(queryUrl.toString(), requestOptions, 15000).then(async (response) => {
+      return fetchWithTimeout(queryUrl.toString(), requestOptions).then(async (response) => {
         logBackendResponse(response, `${method} ${normalizedEndpoint}`);
         const data = await response.json().catch(() => ({}));
 
@@ -155,7 +155,7 @@ export default function AuthPage({
     }
 
     logBackendRequest(method, url, undefined, `${method} ${normalizedEndpoint}`);
-    const response = await fetchWithTimeout(url, requestOptions, 15000);
+    const response = await fetchWithTimeout(url, requestOptions);
     logBackendResponse(response, `${method} ${normalizedEndpoint}`);
     const data = await response.json().catch(() => ({}));
 
