@@ -13,6 +13,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     UniqueConstraint,
@@ -32,6 +33,7 @@ class OrderType(str, enum.Enum):
 class OrderStatus(str, enum.Enum):
     FILLED = "filled"
     REJECTED = "rejected"
+    FORCE_CLOSED = "force_closed"
 
 
 # Alembic
@@ -172,6 +174,61 @@ class Portfolio(Base):
         return f"<Portfolio user_id={self.user_id}>"
 
 
+# Capital Transactions
+class CapitalTransaction(Base):
+    """
+    Immutable ledger of external cash added to or removed from the paper account.
+
+    `amount` is signed:
+      +amount -> deposit
+      -amount -> withdrawal
+
+    This ledger is required to keep total P&L and historical returns correct when
+    a user changes their trading capital after the account has started trading.
+    """
+
+    __tablename__ = "capital_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+    )
+
+    amount: Mapped[float] = mapped_column(
+        Numeric,
+        nullable=False,
+    )
+
+    transaction_type: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    description: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<CapitalTransaction {self.user_id} "
+            f"{self.transaction_type} {self.amount}>"
+        )
+
+
 # User Preferences
 class UserPreference(Base):
     """
@@ -289,6 +346,13 @@ class Order(Base):
         nullable=False,
     )
 
+    predicted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+
     def __repr__(self) -> str:
         return (
             f"<Order "
@@ -302,8 +366,10 @@ class Order(Base):
 # Portfolio Snapshots
 class PortfolioSnapshot(Base):
     """
-    Daily portfolio snapshot.
-    Primary key: (day, user_id)
+    Daily end-of-day snapshot.
+
+    `portfolio_value` is the value of the holdings only.
+    `account_equity` is the full account value used for returns/P&L.
     """
 
     __tablename__ = "portfolio_snapshots"
@@ -315,6 +381,11 @@ class PortfolioSnapshot(Base):
     )
 
     portfolio_value: Mapped[float] = mapped_column(
+        Numeric,
+        nullable=False,
+    )
+
+    account_equity: Mapped[float] = mapped_column(
         Numeric,
         nullable=False,
     )
@@ -389,6 +460,12 @@ class Position(Base):
         nullable=False,
     )
 
+    margin_locked: Mapped[float] = mapped_column(
+        Numeric, 
+        nullable=False, 
+        default=0
+    )
+
     def __repr__(self) -> str:
         return (
             f"<Position "
@@ -430,3 +507,58 @@ class Characteristics(Base):
 
     def __repr__(self) -> str:
         return f"<FirmCharacteristics {self.symbol} {self.day}>"
+
+
+# Auto-Trade Execution Audit Log
+class AutoTradeExecution(Base):
+    """
+    Log of automated trade executions per user and date.
+    Tracks execution timestamp so missed runs (e.g. server offline or asleep)
+    can catch up when the server restarts during market hours.
+    """
+
+    __tablename__ = "auto_trade_executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+
+    execution_date: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+    )
+
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    status: Mapped[str] = mapped_column(
+        String,
+        nullable=False,
+    )
+
+    orders_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    details: Mapped[dict | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return f"<AutoTradeExecution {self.user_id} {self.execution_date} {self.status}>"

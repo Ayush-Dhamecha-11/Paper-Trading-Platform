@@ -476,6 +476,22 @@ class DataLoader:
         returns_df = self.load_returns(cur_symbols, cur_dates)
         R_cur = self.build_R(returns_df, cur_dates, cur_symbols)
 
+        nan_X = torch.isnan(X_cur).sum().item()
+        nan_R = torch.isnan(R_cur).sum().item()
+        if nan_X > 0:
+            logger.warning(f"  {nan_X} NaN values in X - replacing with 0.5 (median rank)")
+            X_cur = torch.nan_to_num(X_cur, nan=0.5)
+        if nan_R > 0:
+            logger.warning(f"  {nan_R} NaN values in R - replacing with 0.0")
+            R_cur = torch.nan_to_num(R_cur, nan=0.0)
+
+        inf_X = torch.isinf(X_cur).sum().item()
+        inf_R = torch.isinf(R_cur).sum().item()
+        if inf_X > 0:
+            X_cur = torch.clamp(X_cur, -10.0, 10.0)
+        if inf_R > 0:
+            R_cur = torch.clamp(R_cur, -0.5, 0.5)
+
         return X_cur, R_cur, cur_dates, cur_symbols
 
 

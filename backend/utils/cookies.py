@@ -12,8 +12,8 @@ def set_auth_cookies(
         key=ACCESS_COOKIE,
         value=access_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
         max_age=60 * 60,
     )
 
@@ -21,8 +21,8 @@ def set_auth_cookies(
         key=REFRESH_COOKIE,
         value=refresh_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
         max_age=60 * 60 * 24 * 30,
     )
 
@@ -30,13 +30,13 @@ def clear_auth_cookies(response: Response):
     response.delete_cookie(
         key=ACCESS_COOKIE,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
     )
 
     response.delete_cookie(
         key=REFRESH_COOKIE,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
     )
