@@ -29,4 +29,4 @@ jobs:
       - name: Run daily pipeline
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python -m jobs.price_fetch_cron
+        run: python -m jobs.cron_job
