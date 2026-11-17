@@ -8,6 +8,7 @@ const navItems = [
   { label: "Dashboard", path: "/dashboard" },
   { label: "Analytics", path: "/analytics" },
   { label: "Portfolio", path: "/portfolio" },
+  { label: "Simulation", path: "/simulation" },
 ] as const;
 
 type HeaderProps = {

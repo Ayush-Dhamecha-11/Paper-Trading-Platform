@@ -68,10 +68,11 @@ function getAllocationChartData(
       {
         data: sectors.map((sector) => sector.value),
         backgroundColor: sectors.map((sector) => sector.color),
-        borderWidth: 0,
-        borderColor: "transparent",
+        borderWidth: 2,
+        borderColor: "#0b1426",
+        hoverBorderColor: "#ffffff",
         hoverOffset: 6,
-        spacing: 0,
+        spacing: 1,
       },
     ],
   };
@@ -195,11 +196,244 @@ export function ProfitLineChart({
   );
 }
 
-const PALETTE = [
-  "#24c6dc", "#5996eb", "#20d89b", "#f5b942", "#f56b6b",
-  "#aa3bff", "#ff7b87", "#38bdf8", "#fb923c", "#a78bfa",
-  "#4ade80", "#f43f5e", "#06b6d4", "#eab308", "#818cf8", "#10b981",
+export const DISTINCT_CHART_PALETTE = [
+  "#3b82f6", // 1. Vibrant Blue
+  "#ff6d00", // 2. Electric Orange
+  "#10b981", // 3. Emerald Green
+  "#ec4899", // 4. Hot Pink
+  "#eab308", // 5. Golden Yellow
+  "#8b5cf6", // 6. Vivid Purple
+  "#00e5ff", // 7. Neon Cyan
+  "#ef4444", // 8. Crimson Red
+  "#84cc16", // 9. Lime Green
+  "#6366f1", // 10. Indigo Blue
+  "#d946ef", // 11. Electric Magenta
+  "#14b8a6", // 12. Deep Teal
+  "#f97316", // 13. Sunset Orange
+  "#38bdf8", // 14. Sky Azure
+  "#b45309", // 15. Warm Bronze
+  "#c084fc", // 16. Lilac Lavender
+  "#2dd4bf", // 17. Aquamarine
+  "#f43f5e", // 18. Coral Rose
+  "#06b6d4", // 19. Aqua Cyan
+  "#a855f7", // 20. Neon Purple
+  "#e11d48", // 21. Ruby Red
+  "#22c55e", // 22. Spring Green
+  "#0ea5e9", // 23. Light Azure
+  "#fb7185", // 24. Salmon Rose
 ];
+
+export const PALETTE = DISTINCT_CHART_PALETTE;
+
+export function parseColorToRgb(colorStr?: string): { r: number; g: number; b: number } | null {
+  if (!colorStr) return null;
+  const c = colorStr.trim().toLowerCase();
+  if (c.startsWith("#")) {
+    let hex = c.slice(1);
+    if (hex.length === 3) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+        return { r, g, b };
+      }
+    }
+  }
+  const rgbMatch = c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (rgbMatch) {
+    const r = parseInt(rgbMatch[1], 10);
+    const g = parseInt(rgbMatch[2], 10);
+    const b = parseInt(rgbMatch[3], 10);
+    if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+      return { r, g, b };
+    }
+  }
+  return null;
+}
+
+export function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  const rNorm = r / 255;
+  const gNorm = g / 255;
+  const bNorm = b / 255;
+  const max = Math.max(rNorm, gNorm, bNorm);
+  const min = Math.min(rNorm, gNorm, bNorm);
+  const delta = max - min;
+  const l = (max + min) / 2;
+  const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
+
+  let h = 0;
+  if (delta !== 0) {
+    if (max === rNorm) {
+      h = ((gNorm - bNorm) / delta) % 6;
+    } else if (max === gNorm) {
+      h = (bNorm - rNorm) / delta + 2;
+    } else {
+      h = (rNorm - gNorm) / delta + 4;
+    }
+    h = Math.round(h * 60);
+    if (h < 0) h += 360;
+  }
+
+  return { h, s, l };
+}
+
+/**
+ * Calculates human perceptual color distance using the Redmean formula (standard approximation of CIELAB ΔE).
+ * Returns a value from 0 (identical) to ~765 (complete opposites like black vs white).
+ */
+export function getColorDistance(c1?: string, c2?: string): number {
+  if (!c1 || !c2) return 999;
+  if (c1.trim().toLowerCase() === c2.trim().toLowerCase()) return 0;
+  const rgb1 = parseColorToRgb(c1);
+  const rgb2 = parseColorToRgb(c2);
+  if (!rgb1 || !rgb2) return 999;
+
+  const rmean = (rgb1.r + rgb2.r) / 2;
+  const dr = rgb1.r - rgb2.r;
+  const dg = rgb1.g - rgb2.g;
+  const db = rgb1.b - rgb2.b;
+  return Math.sqrt(
+    (2 + rmean / 256) * dr * dr +
+    4 * dg * dg +
+    (2 + (255 - rmean) / 256) * db * db
+  );
+}
+
+/**
+ * Checks whether two colors are perceptually identical or too similar in hue/shade.
+ * Detects both low mathematical distance and same hue family (e.g. green vs light green, amber vs yellow).
+ */
+export function areColorsTooClose(c1?: string, c2?: string, threshold = 100): boolean {
+  if (!c1 || !c2) return false;
+  if (c1.trim().toLowerCase() === c2.trim().toLowerCase()) return true;
+
+  const rgb1 = parseColorToRgb(c1);
+  const rgb2 = parseColorToRgb(c2);
+  if (!rgb1 || !rgb2) return false;
+
+  const dist = getColorDistance(c1, c2);
+  if (dist < threshold) return true;
+
+  // Check hue family proximity: if both have clear saturation, check hue difference
+  const hsl1 = rgbToHsl(rgb1.r, rgb1.g, rgb1.b);
+  const hsl2 = rgbToHsl(rgb2.r, rgb2.g, rgb2.b);
+
+  if (hsl1.s > 0.18 && hsl2.s > 0.18 && hsl1.l > 0.15 && hsl2.l > 0.15) {
+    const hueDiff = Math.min(Math.abs(hsl1.h - hsl2.h), 360 - Math.abs(hsl1.h - hsl2.h));
+    // If hues are closer than 32° and distance is under 160, human eye perceives them as the same color family
+    if (hueDiff < 32 && dist < 160) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hslToHex(h: number, s: number, l: number): string {
+  const normH = ((h % 360) + 360) % 360;
+  const sat = s / 100;
+  const light = l / 100;
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const x = c * (1 - Math.abs(((normH / 60) % 2) - 1));
+  const m = light - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (normH < 60) { r = c; g = x; b = 0; }
+  else if (normH < 120) { r = x; g = c; b = 0; }
+  else if (normH < 180) { r = 0; g = c; b = x; }
+  else if (normH < 240) { r = 0; g = x; b = c; }
+  else if (normH < 300) { r = x; g = 0; b = c; }
+  else { r = c; g = 0; b = x; }
+  const toHex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+/**
+ * Generates a golden-angle color (~137.5° hue progression) for maximum perceptual separation.
+ */
+export function getGoldenAngleColor(index: number): string {
+  const hue = Math.round((index * 137.5077) % 360);
+  const lightness = index % 2 === 0 ? 56 : 64;
+  return hslToHex(hue, 85, lightness);
+}
+
+/**
+ * Guarantees that every item in the list receives a genuinely distinct, unique color.
+ * Replaces duplicate, conflicting, or perceptually indistinguishable colors with unique vibrant hues.
+ */
+export function ensureDistinctColors<T extends { color?: string }>(items: T[]): (T & { color: string })[] {
+  if (!items || items.length === 0) return [];
+
+  const assignedColors: string[] = [];
+
+  return items.map((item, index) => {
+    const rawColor = item.color ? item.color.trim() : "";
+    const isGrey = isGreyOrNeutralColor(rawColor);
+
+    let isValid = Boolean(rawColor && !isGrey);
+    if (isValid) {
+      for (const existing of assignedColors) {
+        if (areColorsTooClose(rawColor, existing, 100)) {
+          isValid = false;
+          break;
+        }
+      }
+    }
+
+    let finalColor = isValid ? rawColor : "";
+
+    if (!finalColor) {
+      // 1. Search in DISTINCT_CHART_PALETTE for a color with sufficient perceptual and hue distance
+      for (const candidate of DISTINCT_CHART_PALETTE) {
+        let candidateOk = true;
+        for (const existing of assignedColors) {
+          if (areColorsTooClose(candidate, existing, 100)) {
+            candidateOk = false;
+            break;
+          }
+        }
+        if (candidateOk) {
+          finalColor = candidate;
+          break;
+        }
+      }
+
+      // 2. If palette is exhausted or saturated, generate using golden-angle / equidistant algorithm
+      if (!finalColor) {
+        let bestCandidate = getGoldenAngleColor(index);
+        let maxMinDistance = -1;
+        for (let attempt = 0; attempt < 24; attempt++) {
+          const candidate = getGoldenAngleColor(index * 3 + attempt * 7);
+          let minDist = Infinity;
+          for (const existing of assignedColors) {
+            const dist = getColorDistance(candidate, existing);
+            if (dist < minDist) minDist = dist;
+          }
+          if (minDist > maxMinDistance) {
+            maxMinDistance = minDist;
+            bestCandidate = candidate;
+          }
+          if (minDist >= 100) {
+            bestCandidate = candidate;
+            break;
+          }
+        }
+        finalColor = bestCandidate;
+      }
+    }
+
+    assignedColors.push(finalColor);
+
+    return {
+      ...item,
+      color: finalColor,
+    };
+  });
+}
 
 export function isGreyOrNeutralColor(colorStr?: string): boolean {
   if (!colorStr) return true;
@@ -267,28 +501,12 @@ export function AllocationDoughnutChart({
 
   const coloredSectors = useMemo(() => {
     if (!sectors || sectors.length === 0) return [];
-
-    const usedColors = new Set<string>();
-
-    return sectors.map((s, idx) => {
-      const rawColor = s.color ? s.color.trim() : "";
-      const isGrey = isGreyOrNeutralColor(rawColor);
-      const isDuplicate = Boolean(rawColor && usedColors.has(rawColor.toLowerCase()));
-
-      let finalColor = rawColor;
-      if (isGrey || isDuplicate || !finalColor) {
-        const unused = PALETTE.find((c) => !usedColors.has(c.toLowerCase()));
-        finalColor = unused ?? PALETTE[idx % PALETTE.length];
-      }
-
-      usedColors.add(finalColor.toLowerCase());
-
-      return {
+    return ensureDistinctColors(
+      sectors.map((s) => ({
         ...s,
         value: Number(Number(s.value).toFixed(2)),
-        color: finalColor,
-      };
-    });
+      }))
+    );
   }, [sectors]);
 
   const chartData = useMemo(() => getAllocationChartData(coloredSectors), [coloredSectors]);
