@@ -149,7 +149,7 @@ def _fetch_aligned_data(
     target_ts = pd.Timestamp(target_date)
     dates_through_target = date_values[date_values <= target_ts]
 
-    if len(dates_through_target) == 0 or dates_through_target[-1].date() != target_date.date():
+    if len(dates_through_target) == 0 or dates_through_target[-1].date() != target_date:
         latest_available = dates_through_target[-1].date() if len(dates_through_target) else None
         raise RuntimeError(
             f"No characteristics panel row exists for target date {target_date}. "
@@ -341,7 +341,7 @@ def predict_next_day_portfolio(target_date: date | None = None) -> dict[str, Any
     years_to_test = 1
     K_list = [3]
     md = ["learnable"]  # ["learnable", "pca"]
-    hidden_projection_dim = 32
+    hidden_projection_dim = 64
     lookback_length = 40
     epoch = 30
     learning_rate = 0.005
