@@ -9,6 +9,28 @@ const backendBaseUrl = String(
     import.meta.env.BACKEND_URL ||
     "http://localhost:8000"
 ).replace(/\/$/, "");
+const resetVerifierStoragePrefix = "password_reset_verifier:";
+
+const encodeBase64Url = (bytes: Uint8Array) =>
+  btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+const createRecoveryProof = async () => {
+  const verifier = encodeBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const state = encodeBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+  const challengeBytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier)
+  );
+
+  return {
+    verifier,
+    state,
+    challenge: encodeBase64Url(new Uint8Array(challengeBytes)),
+  };
+};
 
 export default function ForgotPasswordPage() {
   const navigate = useNavigate();
@@ -29,8 +51,13 @@ export default function ForgotPasswordPage() {
     }
 
     setLoading(true);
+    let verifierStorageKey: string | null = null;
 
     try {
+      const recoveryProof = await createRecoveryProof();
+      verifierStorageKey = `${resetVerifierStoragePrefix}${recoveryProof.state}`;
+      window.localStorage.setItem(verifierStorageKey, recoveryProof.verifier);
+
       const response = await authenticatedFetch(`${backendBaseUrl}/auth/forgot-password`, {
         method: "POST",
         headers: {
@@ -38,7 +65,11 @@ export default function ForgotPasswordPage() {
           Accept: "application/json",
         },
         credentials: "include",
-        body: JSON.stringify({ email:email }),
+        body: JSON.stringify({
+          email: email,
+          code_challenge: recoveryProof.challenge,
+          state: recoveryProof.state,
+        }),
       });
       logBackendResponse(response, "POST /auth/forgot-password");
 
@@ -64,6 +95,9 @@ export default function ForgotPasswordPage() {
 
       setTimeout(() => navigate("/login", { replace: true }), 1200);
     } catch (error) {
+      if (verifierStorageKey) {
+        window.localStorage.removeItem(verifierStorageKey);
+      }
       const errMessage = error instanceof Error ? error.message : "Unable to send reset link.";
       showAppAlert({
         title: "Error",

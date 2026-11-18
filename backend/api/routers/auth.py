@@ -1,7 +1,12 @@
 import os
+from urllib.parse import urlencode
+
+import httpx
 from fastapi import APIRouter, HTTPException, Depends, Response, Cookie
 from fastapi.responses import RedirectResponse
 from db.supabase_client import supabase, admin_supabase
+from supabase import create_client
+from supabase.lib.client_options import SyncClientOptions
 from api.schemas.auth import (
     RegisterRequest,
     LoginRequest,
@@ -113,14 +118,34 @@ def login(payload: LoginRequest, response: Response):
 @router.post("/forgot-password")
 def forgot_password(payload: ForgotPasswordRequest):
     try:
-        redirect_url = os.getenv("FRONTEND_URL")
-        supabase.auth.reset_password_for_email(
-            payload.email,
-            { "redirect_to": f"{redirect_url}/reset-password"}
+        frontend_url = os.getenv("FRONTEND_URL")
+        supabase_url = os.getenv("SUPABASE_URL")
+        anon_key = os.getenv("SUPABASE_ANON_KEY")
+        if not frontend_url or not supabase_url or not anon_key:
+            raise HTTPException(status_code=500, detail="Password recovery is not configured.")
+
+        redirect_to = (
+            f"{frontend_url.rstrip('/')}/reset-password?"
+            f"{urlencode({'state': payload.state})}"
         )
+        # The Python helper does not expose the PKCE challenge fields required for code exchange.
+        response = httpx.post(
+            f"{supabase_url.rstrip('/')}/auth/v1/recover",
+            params={"redirect_to": redirect_to},
+            headers={"apikey": anon_key},
+            json={
+                "email": payload.email,
+                "code_challenge": payload.code_challenge,
+                "code_challenge_method": "s256",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
 
         return { "message": "Password reset email sent"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -130,18 +155,47 @@ def forgot_password(payload: ForgotPasswordRequest):
 @router.post("/reset-password")
 def reset_password(payload: ResetPasswordRequest):
     try:
-        supabase.auth.set_session(
-            payload.access_token,
-            payload.refresh_token
+        supabase_url = os.getenv("SUPABASE_URL")
+        anon_key = os.getenv("SUPABASE_ANON_KEY")
+        if not supabase_url or not anon_key:
+            raise HTTPException(status_code=500, detail="Password recovery is not configured.")
+
+        recovery_client = create_client(
+            supabase_url,
+            anon_key,
+            SyncClientOptions(
+                auto_refresh_token=False,
+                persist_session=False,
+                flow_type="pkce",
+            ),
         )
 
-        supabase.auth.update_user({"password": payload.new_password})
+        if payload.code and payload.code_verifier:
+            exchange = recovery_client.auth.exchange_code_for_session({
+                "auth_code": payload.code,
+                "code_verifier": payload.code_verifier,
+            })
+            if not exchange.session:
+                raise HTTPException(status_code=400, detail="Could not verify the password reset link.")
+        elif payload.access_token and payload.refresh_token:
+            recovery_client.auth.set_session(
+                payload.access_token,
+                payload.refresh_token,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Reset token is missing. Please use the link from your email.",
+            )
+
+        recovery_client.auth.update_user({"password": payload.new_password})
 
         return { 
             "message": "Password updated successfully", 
             }
 
-
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

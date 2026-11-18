@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { showAppAlert } from "../utils/alertConfig";
-import {
-  authenticatedFetch,
-  logBackendResponse,
-  setStoredAuthToken,
-} from "../utils/authUtils";
+import { authenticatedFetch, logBackendResponse } from "../utils/authUtils";
 import "../pages_css/login.css";
 
 const backendBaseUrl = String(
@@ -13,52 +9,45 @@ const backendBaseUrl = String(
     import.meta.env.BACKEND_URL ||
     "http://localhost:8000"
 ).replace(/\/$/, "");
+const resetVerifierStoragePrefix = "password_reset_verifier:";
 
-export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSuccess?: () => void }) {
+export default function ResetPasswordPage() {
   const navigate = useNavigate();
-  const resetTokens = (() => {
+  const [recoveryData] = useState(() => {
+    const query = new URLSearchParams(window.location.search);
+    const code = query.get("code") || "";
+    const state = query.get("state") || "";
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
-    if (!hash) {
-      return { accessToken: "", refreshToken: "" };
-    }
-
     const params = new URLSearchParams(hash);
     return {
+      code,
+      state,
+      codeVerifier: state
+        ? window.localStorage.getItem(`${resetVerifierStoragePrefix}${state}`) || ""
+        : "",
       accessToken: params.get("access_token") || "",
       refreshToken: params.get("refresh_token") || "",
     };
-  })();
+  });
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
-    if (!hash) {
-      return;
+    if (window.location.search || window.location.hash) {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.search = "";
+      cleanUrl.hash = "";
+      window.history.replaceState({}, "", cleanUrl.toString());
     }
-
-    const params = new URLSearchParams(hash);
-    const accessToken = params.get("access_token") || "";
-    const refreshToken = params.get("refresh_token") || "";
-
-    if (!accessToken && !refreshToken) {
-      return;
-    }
-
-    const cleanUrl = new URL(window.location.href);
-    cleanUrl.hash = "";
-    window.history.replaceState({}, "", cleanUrl.toString());
   }, []);
-  const saveAuthToken = (token: string, refreshToken?: string) => {
-    setStoredAuthToken(token, refreshToken);
-    onAuthSuccess?.();
-  };
 
   const handleSubmit = async (event: { preventDefault: () => void }) => {
     event.preventDefault();
 
-    if (!resetTokens.accessToken || !resetTokens.refreshToken) {
+    const hasCode = recoveryData.code && recoveryData.codeVerifier;
+    const hasLegacyTokens = recoveryData.accessToken && recoveryData.refreshToken;
+    if (!hasCode && !hasLegacyTokens) {
       showAppAlert({
         title: "Error",
         text: "Reset token is missing. Please use the link from your email.",
@@ -99,8 +88,15 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
         },
         credentials: "include",
         body: JSON.stringify({
-          access_token: resetTokens.accessToken,
-          refresh_token: resetTokens.refreshToken,
+          ...(hasCode
+            ? {
+                code: recoveryData.code,
+                code_verifier: recoveryData.codeVerifier,
+              }
+            : {
+                access_token: recoveryData.accessToken,
+                refresh_token: recoveryData.refreshToken,
+              }),
           new_password: password,
         }),
       });
@@ -113,8 +109,11 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
       }
 
       const successText = data.message || "Password updated successfully.";
-      const token = data.token || data.access_token || data.refresh_token;
-      saveAuthToken(token, data.refresh_token);
+      if (recoveryData.state) {
+        window.localStorage.removeItem(
+          `${resetVerifierStoragePrefix}${recoveryData.state}`
+        );
+      }
 
       showAppAlert({
         title: "Success",
@@ -128,7 +127,7 @@ export default function ResetPasswordPage({ onAuthSuccess }: { readonly onAuthSu
         JSON.stringify({ text: successText, type: "success" })
       );
 
-      setTimeout(() => navigate("/dashboard", { replace: true }), 1200);
+      setTimeout(() => navigate("/login", { replace: true }), 1200);
     } catch (error) {
       const errMessage = error instanceof Error ? error.message : "Unable to reset password.";
       showAppAlert({
