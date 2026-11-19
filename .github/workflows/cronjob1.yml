@@ -4,7 +4,7 @@ on:
   schedule:
     # GitHub Actions cron is UTC only, no timezone support.
     # 17:00 IST = 11:30 UTC. NSE trading days are Mon-Fri.
-    - cron: "0 17 * * 1-5"
+    - cron: "0 3 * * 1-5"
       timezone: "Asia/Kolkata"
       
   workflow_dispatch: {}   # lets you trigger it manually from the Actions tab, for testing

@@ -1,6 +1,6 @@
 import logging
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 current_dir = Path(__file__).resolve().parent
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def run(target_date: datetime | None = None) -> None:
-    target_date = target_date or (now_ist() - timedelta(days=1))
+    target_date = target_date or now_ist()
     
     logger.info("--- Daily CRON job starting for %s ---", target_date)
 
