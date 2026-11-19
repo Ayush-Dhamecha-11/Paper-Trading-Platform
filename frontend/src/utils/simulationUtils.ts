@@ -123,9 +123,61 @@ export function formatDateToISO(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+export const MIN_SIMULATION_START_DATE = "2013-01-01";
+export const SIMULATION_PARAMS_STORAGE_KEY = "sim_saved_params";
+export const SIMULATION_RESULT_STORAGE_KEY = "sim_saved_result";
+
+export type SavedSimulationParams = {
+  startDate: string;
+  endDate: string;
+  capital: number;
+  modelName: string;
+};
+
+export function getSavedSimulationParams(): SavedSimulationParams | null {
+  try {
+    const raw = sessionStorage.getItem(SIMULATION_PARAMS_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SavedSimulationParams;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSimulationParams(params: SavedSimulationParams): void {
+  try {
+    sessionStorage.setItem(SIMULATION_PARAMS_STORAGE_KEY, JSON.stringify(params));
+  } catch {
+    // ignore
+  }
+}
+
+export function getSavedSimulationResult(): SimulationExecutionResult | null {
+  try {
+    const raw = sessionStorage.getItem(SIMULATION_RESULT_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SimulationExecutionResult;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSimulationResult(result: SimulationExecutionResult): void {
+  try {
+    sessionStorage.setItem(SIMULATION_RESULT_STORAGE_KEY, JSON.stringify(result));
+  } catch {
+    // ignore
+  }
+}
+
+// Module-level in-flight promise to track running simulations across page navigations
+export let inFlightSimulationPromise: Promise<SimulationExecutionResult> | null = null;
+export let inFlightSimulationParams: SavedSimulationParams | null = null;
+
 /**
  * Validates simulation input parameters:
  * - Start date must be strictly earlier than end date.
+ * - Start date cannot be before 1st January 2013.
  * - End date must be on or before the maximum allowed simulation date (at least 2 working days prior).
  * - Capital must be a positive number.
  */
@@ -136,6 +188,13 @@ export function validateSimulationParams(
 ): { valid: boolean; error?: string } {
   if (!startDateStr || !endDateStr) {
     return { valid: false, error: "Please select both a start date and an end date." };
+  }
+
+  if (startDateStr < MIN_SIMULATION_START_DATE) {
+    return {
+      valid: false,
+      error: "Start date cannot be before 1st January 2013 (backend data begins in 2013).",
+    };
   }
 
   const startDate = new Date(`${startDateStr}T00:00:00`);
@@ -211,56 +270,81 @@ export function validateSimulationParams(
     /**
      * Executes simulation via POST /api/simulation/run.
      * If backend fails, is unreachable, or returns an error, seamlessly activates the demo simulation engine.
+     * Caches in-flight execution and results so page transitions preserve state.
      */
-    export async function runSimulation(
+    export function runSimulation(
       req: BackendSimulationRequest
     ): Promise<SimulationExecutionResult> {
-      const backendBaseUrl = getBackendBaseUrl();
-      const url = `${backendBaseUrl}/api/simulation/run`;
-
-      const payload: BackendSimulationRequest = {
-        start_date: req.start_date,
-        end_date: req.end_date,
-        initial_capital: req.initial_capital,
-        model_name: req.model_name || "attention_factor_longconv",
+      const currentParams: SavedSimulationParams = {
+        startDate: req.start_date,
+        endDate: req.end_date,
+        capital: req.initial_capital,
+        modelName: req.model_name || "attention_factor_longconv",
       };
+      saveSimulationParams(currentParams);
+      inFlightSimulationParams = currentParams;
 
-      try {
-        const response = await authenticatedFetch(
-          url,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          },
-          "POST /api/simulation/run"
-        );
+      const promise = (async (): Promise<SimulationExecutionResult> => {
+        try {
+          const backendBaseUrl = getBackendBaseUrl();
+          const url = `${backendBaseUrl}/api/simulation/run`;
 
-        logBackendResponse(response, "POST /api/simulation/run");
+          const payload: BackendSimulationRequest = {
+            start_date: req.start_date,
+            end_date: req.end_date,
+            initial_capital: req.initial_capital,
+            model_name: req.model_name || "attention_factor_longconv",
+          };
 
-        if (response.ok) {
-            const data = (await response.json()) as Partial<BackendSimulationResponse>;
-            if (data && data.summary && Array.isArray(data.daily)) {
-              return {
-                status: data.status || "success",
-                requested_start: data.requested_start || req.start_date,
-                requested_end: data.requested_end || req.end_date,
-                initial_capital: data.initial_capital ?? req.initial_capital,
-                trading_days: data.trading_days ?? data.daily.length,
-                model_name: data.model_name || req.model_name,
-                summary: data.summary as BackendSimulationResponse["summary"],
-                daily: data.daily,
-                isDemoFallback: false,
-              };
+          let result: SimulationExecutionResult;
+          try {
+            const response = await authenticatedFetch(
+              url,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              },
+              "POST /api/simulation/run"
+            );
+
+            logBackendResponse(response, "POST /api/simulation/run");
+
+            if (response.ok) {
+              const data = (await response.json()) as Partial<BackendSimulationResponse>;
+              if (data && data.summary && Array.isArray(data.daily)) {
+                result = {
+                  status: data.status || "success",
+                  requested_start: data.requested_start || req.start_date,
+                  requested_end: data.requested_end || req.end_date,
+                  initial_capital: data.initial_capital ?? req.initial_capital,
+                  trading_days: data.trading_days ?? data.daily.length,
+                  model_name: data.model_name || req.model_name,
+                  summary: data.summary as BackendSimulationResponse["summary"],
+                  daily: data.daily,
+                  isDemoFallback: false,
+                };
+                saveSimulationResult(result);
+                return result;
+              }
             }
+          } catch (error) {
+            console.warn("Backend /api/simulation/run unavailable, engaging demo simulation process:", error);
           }
-        } catch (error) {
-          console.warn("Backend /api/simulation/run unavailable, engaging demo simulation process:", error);
-        }
 
-        // Fallback demo simulation process
-        return generateDemoSimulation(payload);
-      }
+          // Fallback demo simulation process
+          result = generateDemoSimulation(payload);
+          saveSimulationResult(result);
+          return result;
+        } finally {
+          inFlightSimulationPromise = null;
+          inFlightSimulationParams = null;
+        }
+      })();
+
+      inFlightSimulationPromise = promise;
+      return promise;
+    }
 
 /**
  * Deterministic pseudo-random generator based on seed string.

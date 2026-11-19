@@ -215,6 +215,11 @@ export function fetchDailySuggestions(_availableStocks?: Stock[]): Promise<Trade
                 ? parsedWeight
                 : undefined;
 
+            // Determine true execution status: only consider executed if backend flags indicate execution and a timestamp exists.
+            const isExplicitlyExecuted =
+              (item.status === "executed" || item.is_executed === true || item.executed === true) &&
+              Boolean(item.executedAt);
+            const effectiveStatus: "pending" | "executed" = isExplicitlyExecuted ? "executed" : "pending";
             return {
               id: String(item.id ?? `sug_${ticker}_${idx}_${Date.now()}`),
               ticker,
@@ -223,10 +228,10 @@ export function fetchDailySuggestions(_availableStocks?: Stock[]): Promise<Trade
               quantity,
               price,
               weight,
-              status: (item.status === "executed" ? "executed" : "pending") as "pending" | "executed",
-              executedAt: item.executedAt ? String(item.executedAt) : undefined,
-              is_executed: Boolean(item.is_executed || item.executed),
-              executed: Boolean(item.executed || item.is_executed),
+              status: effectiveStatus,
+              executedAt: isExplicitlyExecuted && item.executedAt ? String(item.executedAt) : undefined,
+              is_executed: isExplicitlyExecuted,
+              executed: isExplicitlyExecuted,
               predicted: Boolean(item.predicted ?? true),
             };
           })

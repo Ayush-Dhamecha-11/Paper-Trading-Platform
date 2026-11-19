@@ -1,3 +1,4 @@
+from datetime import timedelta
 import logging
 from typing import List, Optional
 
@@ -8,7 +9,11 @@ from sqlalchemy.orm import Session
 from api.dependencies.auth import get_current_user
 from api.dependencies.portfolio import get_or_create_portfolio
 from api.schemas.strategy import TradeSuggestionOut
-from api.services.market_data import MarketDataError, today_ist
+from api.services.market_data import (
+    MarketDataError,
+    get_previous_trading_day,
+    today_ist,
+)
 from api.services.portfolio_accounting import (
     _ist_day_bounds,
     build_portfolio_state,
@@ -78,9 +83,21 @@ def get_strategy_suggestions(
         .scalar_one_or_none()
     )
 
+    # Validate prediction freshness: today's suggestions can ONLY use yesterday's / previous trading day's prediction.
+    # For example, a prediction with as_of_date = 2026-11-17 can only be used for 2026-11-18 suggestions.
+    # If today is 2026-11-19 and the 2026-11-18 prediction is not in the table, the backend returns empty suggestions ([]).
+    prev_trading_day = get_previous_trading_day(today)
+    valid_prediction_dates = {prev_trading_day, today - timedelta(days=1)}
+
+    is_prediction_current = (
+        latest_pred is not None
+        and latest_pred.as_of_date in valid_prediction_dates
+        and bool(latest_pred.weight_for_symbols)
+    )
+
     symbol_target_raw: dict[str, float] = {}
     symbol_weights_pct: dict[str, float] = {}
-    if latest_pred and latest_pred.weight_for_symbols:
+    if is_prediction_current and latest_pred.weight_for_symbols:
         raw_weights = [float(w) for w in latest_pred.weight_for_symbols]
         for stock, w in zip(universe_stocks, raw_weights):
             symbol_target_raw[stock.symbol] = w
@@ -98,12 +115,16 @@ def get_strategy_suggestions(
                 weight=symbol_weights_pct.get(order.symbol, 0.0),
                 status="executed",
                 executedAt=order.timestamp.isoformat(),
+                is_executed=True,
+                executed=True,
+                predicted=True,
             )
             for order in executed_orders
         ]
 
-    # 2. If no predicted orders executed today, compute pending suggestions
-    if latest_pred is None or not latest_pred.weight_for_symbols:
+    # 2. If no predicted orders executed today, compute pending suggestions.
+    # If the latest prediction is not from yesterday / previous trading day, return 0 suggestions.
+    if not is_prediction_current:
         return []
 
     portfolio = get_or_create_portfolio(db, user_id)
@@ -172,6 +193,9 @@ def get_strategy_suggestions(
                 weight=symbol_weights_pct.get(t.symbol, 0.0),
                 status="pending",
                 executedAt=None,
+                is_executed=False,
+                executed=False,
+                predicted=True,
             )
         )
 

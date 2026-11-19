@@ -57,6 +57,13 @@ def get_simulation(
         else (end_d - timedelta(days=90))
     )
 
+    MIN_START_DATE = date(2013, 1, 1)
+    if start_d < MIN_START_DATE:
+        raise HTTPException(
+            status_code=400,
+            detail="start_date cannot be before 2013-01-01 (backend market data begins in 2013).",
+        )
+
     if start_d > end_d:
         raise HTTPException(status_code=400, detail="start_date must be on or before end_date.")
 

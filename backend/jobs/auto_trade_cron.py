@@ -209,6 +209,15 @@ def is_trading_day(target_date: date) -> bool:
     return True
 
 
+def get_previous_trading_day(target_date: date) -> date:
+    """Return the NSE trading day immediately preceding target_date."""
+    from datetime import timedelta
+    d = target_date - timedelta(days=1)
+    while not is_trading_day(d):
+        d -= timedelta(days=1)
+    return d
+
+
 def is_market_open_now(now: datetime | None = None) -> tuple[bool, str]:
     """
     Check if the market is currently open for trade execution.
@@ -724,6 +733,22 @@ def run_auto_trade_job(
             return {
                 "status": "aborted",
                 "reason": "No model prediction found",
+                "timestamp": now.isoformat(),
+                "users_processed": 0,
+            }
+
+        prev_trading_day = get_previous_trading_day(today)
+        from datetime import timedelta
+        valid_prediction_dates = {prev_trading_day, today - timedelta(days=1)}
+        if latest_pred.as_of_date not in valid_prediction_dates:
+            logger.warning(
+                "Latest model prediction as_of_date (%s) is outdated for today (%s). Auto-trade halted.",
+                latest_pred.as_of_date,
+                today,
+            )
+            return {
+                "status": "aborted",
+                "reason": f"Prediction as_of_date {latest_pred.as_of_date} is outdated for {today}",
                 "timestamp": now.isoformat(),
                 "users_processed": 0,
             }

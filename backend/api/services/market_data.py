@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from threading import Lock
 from typing import Iterable
 from zoneinfo import ZoneInfo
@@ -31,6 +31,67 @@ IST = ZoneInfo("Asia/Kolkata")
 NSE_OPEN = time(9, 15)
 NSE_CLOSE = time(15, 30)
 DEFAULT_CACHE_SECONDS = 10
+
+# Known National / NSE Trading Holidays (Month, Day)
+STANDARD_NSE_HOLIDAYS_MD: set[tuple[int, int]] = {
+    (1, 26),   # Republic Day
+    (5, 1),    # Maharashtra Day / May Day
+    (8, 15),   # Independence Day
+    (10, 2),   # Gandhi Jayanti
+    (12, 25),  # Christmas
+}
+
+# Variable holiday calendar for active trading years (GRCh/NSE observed)
+NSE_VARIABLE_HOLIDAYS: set[date] = {
+    # 2025
+    date(2025, 2, 26),  # Mahashivratri
+    date(2025, 3, 14),  # Holi
+    date(2025, 3, 31),  # Id-Ul-Fitr
+    date(2025, 4, 10),  # Mahavir Jayanti
+    date(2025, 4, 14),  # Dr. Baba Saheb Ambedkar Jayanti
+    date(2025, 4, 18),  # Good Friday
+    date(2025, 6, 7),   # Bakri Id
+    date(2025, 8, 27),  # Ganesh Chaturthi
+    date(2025, 10, 2),  # Mahatma Gandhi Jayanti / Dussehra
+    date(2025, 10, 21), # Diwali Laxmi Pujan
+    date(2025, 10, 22), # Diwali Balipratipada
+    date(2025, 11, 5),  # Gurunanak Jayanti
+    # 2026
+    date(2026, 1, 26),  # Republic Day
+    date(2026, 2, 16),  # Mahashivratri
+    date(2026, 3, 4),   # Holi
+    date(2026, 3, 20),  # Id-Ul-Fitr
+    date(2026, 4, 3),   # Good Friday
+    date(2026, 4, 14),  # Ambedkar Jayanti
+    date(2026, 5, 1),   # Maharashtra Day
+    date(2026, 5, 27),  # Bakri Id
+    date(2026, 8, 15),  # Independence Day
+    date(2026, 9, 15),  # Ganesh Chaturthi
+    date(2026, 10, 2),  # Gandhi Jayanti
+    date(2026, 10, 20), # Dussehra
+    date(2026, 11, 8),  # Diwali
+    date(2026, 11, 24), # Guru Nanak Jayanti
+    date(2026, 12, 25), # Christmas
+}
+
+
+def is_trading_day(target_date: date) -> bool:
+    """Return True if target_date is a valid NSE trading day (Mon-Fri and not holiday)."""
+    if target_date.weekday() >= 5:
+        return False
+    if (target_date.month, target_date.day) in STANDARD_NSE_HOLIDAYS_MD:
+        return False
+    if target_date in NSE_VARIABLE_HOLIDAYS:
+        return False
+    return True
+
+
+def get_previous_trading_day(target_date: date) -> date:
+    """Return the NSE trading day immediately preceding target_date."""
+    d = target_date - timedelta(days=1)
+    while not is_trading_day(d):
+        d -= timedelta(days=1)
+    return d
 
 
 class MarketDataError(RuntimeError):

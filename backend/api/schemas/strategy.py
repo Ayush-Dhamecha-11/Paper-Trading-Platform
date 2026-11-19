@@ -12,3 +12,6 @@ class TradeSuggestionOut(BaseModel):
     weight: float = 0.0
     status: Literal["pending", "executed"]
     executedAt: Optional[str] = None
+    is_executed: bool = False
+    executed: bool = False
+    predicted: bool = True

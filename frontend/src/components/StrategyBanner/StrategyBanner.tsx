@@ -50,7 +50,16 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   const [executing, setExecuting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [executionResult, setExecutionResult] = useState<string | null>(null);
-  const [isAlreadyExecuted, setIsAlreadyExecuted] = useState(() => areSuggestionsExecutedToday());
+  const [isAlreadyExecuted, setIsAlreadyExecuted] = useState(() => {
+    if (cachedSuggestions && cachedSuggestions.length > 0) {
+      return cachedSuggestions.every(
+        (s) =>
+          s.status === "executed" &&
+          (s.is_executed === true || s.executed === true || Boolean(s.executedAt))
+      );
+    }
+    return false;
+  });
 
   // Auto-recover execution button if action times out or is cancelled
   useResetStuckAction(() => {
@@ -75,20 +84,26 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
         if (!mounted) return;
         setRawSuggestions(data);
         setLoading(false);
-        const allExecuted =
+        const allDone =
           data.length > 0 &&
           data.every(
             (s) =>
-              s.status === "executed" ||
-              s.is_executed === true ||
-              s.executed === true ||
-              Boolean(s.executedAt)
+              s.status === "executed" &&
+              (s.is_executed === true || s.executed === true || Boolean(s.executedAt))
           );
-        if (allExecuted) {
+        if (allDone) {
           setIsAlreadyExecuted(true);
           markSuggestionsExecuted();
         } else {
           setIsAlreadyExecuted(false);
+          try {
+            sessionStorage.removeItem(SUGGESTIONS_EXECUTED_KEY);
+            sessionStorage.removeItem(`${SUGGESTIONS_EXECUTED_KEY}_date`);
+            localStorage.removeItem(SUGGESTIONS_EXECUTED_KEY);
+            localStorage.removeItem(`${SUGGESTIONS_EXECUTED_KEY}_date`);
+          } catch {
+            // ignore
+          }
         }
       })
       .catch((err) => {
@@ -216,8 +231,19 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
     return null;
   }
 
-  // ── Mode 1: Auto-Trade is ON (Trades were executed overnight by backend) ──
-  if (isAutoTradeOn) {
+  const allExecuted = useMemo(() => {
+    return (
+      validSuggestions.length > 0 &&
+      validSuggestions.every(
+        (s) =>
+          s.status === "executed" &&
+          (s.is_executed === true || s.executed === true || Boolean(s.executedAt))
+      )
+    );
+  }, [validSuggestions]);
+
+  // ── Mode 1: Auto-Trade is ON AND Trades were actually executed by backend ──
+  if (isAutoTradeOn && (allExecuted || isAlreadyExecuted)) {
     return (
       <section className="strategy-banner strategy-banner-auto-on" aria-label="Auto-Trade Activity">
         <div className="strategy-banner-header">
@@ -342,13 +368,22 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
           <div className="strategy-tag-row">
             <span
               className={`strategy-pill ${
-                isAlreadyExecuted ? "strategy-pill-executed" : "strategy-pill-suggestion"
+                isAlreadyExecuted || allExecuted
+                  ? "strategy-pill-executed"
+                  : isAutoTradeOn
+                  ? "strategy-pill-warning"
+                  : "strategy-pill-suggestion"
               }`}
             >
-              {isAlreadyExecuted ? (
+              {isAlreadyExecuted || allExecuted ? (
                 <>
                   <CheckCircle2 size={13} aria-hidden="true" />
                   Executed
+                </>
+              ) : isAutoTradeOn ? (
+                <>
+                  <AlertTriangle size={13} aria-hidden="true" />
+                  Auto-Trade: Not Executed
                 </>
               ) : (
                 <>
@@ -358,15 +393,21 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
               )}
             </span>
             <span className="strategy-mode-indicator">
-              {isAlreadyExecuted ? "Strategy Executed for Today" : "Auto-Trade: OFF"}
+              {isAlreadyExecuted || allExecuted
+                ? "Strategy Executed for Today"
+                : isAutoTradeOn
+                ? "Auto-trade is ON, but trades were not executed"
+                : "Auto-Trade: OFF"}
             </span>
           </div>
           <h3 className="strategy-heading">
             Today&apos;s Trade Suggestions ({validSuggestions.length} stocks: {buyCount} buy, {sellCount} sell)
           </h3>
           <p className="strategy-desc">
-            {isAlreadyExecuted
+            {isAlreadyExecuted || allExecuted
               ? "Today's recommended algorithm trades have been executed. Positions are updated in your portfolio."
+              : isAutoTradeOn
+              ? "Auto-trade is active on your account, but today's recommended trades were not executed by the system (the market was closed or auto-trade did not run). You can review the suggestions and execute manually."
               : "Algorithm-generated trade recommendations. Execute directly as-is or customize quantities in your trade basket."}
           </p>
         </div>
@@ -382,6 +423,15 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
       </div>
 
       <div className="strategy-banner-content">
+        {isAutoTradeOn && !(isAlreadyExecuted || allExecuted) && (
+          <div className="strategy-auto-missed-alert" role="status">
+            <AlertTriangle size={15} aria-hidden="true" />
+            <span>
+              Auto-trade is turned ON on your account, but automatic trade execution did not take place. No trades were placed in your account.
+            </span>
+          </div>
+        )}
+
         {/* Scrollable table of suggestions — 1 by 1 row just like StockTable */}
         <div className="strategy-table-wrapper">
           <table className="strategy-table">
@@ -399,11 +449,9 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
               {validSuggestions.map((item) => {
                 const subtotal = item.price * item.quantity;
                 const isItemDone =
-                  isAlreadyExecuted ||
-                  item.status === "executed" ||
-                  item.is_executed === true ||
-                  item.executed === true ||
-                  Boolean(item.executedAt);
+                  (isAlreadyExecuted || allExecuted) &&
+                  item.status === "executed" &&
+                  (item.is_executed === true || item.executed === true || Boolean(item.executedAt));
 
                 const actionType = breakdown.itemActionMap.get(item.id) ?? item.action;
 
@@ -478,7 +526,7 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
           </div>
 
           <div className="strategy-btn-group">
-            {!isAlreadyExecuted ? (
+            {!(isAlreadyExecuted || allExecuted) ? (
               <>
                 {marketClosed && (
                   <span className="strategy-market-closed-warning" title="Stock market is currently closed">

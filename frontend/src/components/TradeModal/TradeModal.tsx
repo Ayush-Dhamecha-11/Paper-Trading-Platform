@@ -35,6 +35,7 @@ import {
   DASHBOARD_SUMMARY_CACHE_KEY,
   HOLDINGS_CACHE_KEY,
   CAPITAL_CACHE_KEY,
+  SUGGESTIONS_CACHE_KEY,
   getCachedData,
   setCachedData,
 } from "../../utils/dataCache";
@@ -44,6 +45,7 @@ import {
   fetchDailySuggestions,
   markSuggestionsExecuted,
   areSuggestionsExecutedToday,
+  type TradeSuggestion,
 } from "../../utils/tradeApi";
 import { isMarketClosed } from "../../utils/marketUtils";
 import { trackAction, useResetStuckAction } from "../../utils/actionWatchdog";
@@ -224,6 +226,14 @@ export default function TradeModal({
   const [tradeError, setTradeError] = useState<string>("");
   const [lastExecutedCount, setLastExecutedCount] = useState<number>(0);
 
+  // ── Strategy suggestions state ──
+  const [dailySuggestions, setDailySuggestions] = useState<TradeSuggestion[] | null>(() => {
+    return getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY) ?? null;
+  });
+  const [suggestionsLoading, setSuggestionsLoading] = useState<boolean>(() => {
+    return getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY) === null;
+  });
+
   // Auto-recover from any stuck submitting or saving state if an action times out or is cancelled
   useResetStuckAction(() => {
     setTradeStatus((curr) => (curr === "submitting" ? "idle" : curr));
@@ -311,6 +321,25 @@ export default function TradeModal({
       setHoldings(hold);
       setCapitalLoading(false);
     });
+
+    // Check today's strategy suggestions availability
+    const cachedSugs = getCachedData<TradeSuggestion[]>(SUGGESTIONS_CACHE_KEY);
+    if (cachedSugs) {
+      setDailySuggestions(cachedSugs);
+      setSuggestionsLoading(false);
+    } else {
+      setSuggestionsLoading(true);
+    }
+    void fetchDailySuggestions(getAllStocks())
+      .then((sugs) => {
+        setDailySuggestions(sugs ?? []);
+      })
+      .catch(() => {
+        setDailySuggestions([]);
+      })
+      .finally(() => {
+        setSuggestionsLoading(false);
+      });
 
     // If initial basket is provided (e.g. from strategy suggestions), populate it
     if (initialBasket && initialBasket.length > 0) {
@@ -1168,33 +1197,55 @@ export default function TradeModal({
             </div>
           ) : basket.length === 0 ? (
             <div className="tm-basket-empty">
-              <p>Your basket is empty. Search a stock above to add buy and sell orders together.</p>
-              <button
-                type="button"
-                className="tm-btn-import-sug"
-                onClick={async () => {
-                  const sugs = await fetchDailySuggestions(allStocks);
-                  const isAlreadyDone =
-                    areSuggestionsExecutedToday() ||
-                    sugs.every(
-                      (s) => s.status === "executed" || s.is_executed === true || s.executed === true
-                    );
-                  setBasket(
-                    sugs.map((s, idx) => ({
-                      id: `item_${Date.now()}_${idx}`,
-                      ticker: s.ticker,
-                      name: s.name,
-                      price: s.price,
-                      action: s.action,
-                      quantity: s.quantity,
-                      predicted: !isAlreadyDone,
-                    }))
-                  );
-                }}
-              >
-                <Zap size={13} aria-hidden="true" />
-                <span>Load Today&apos;s Strategy Suggestions</span>
-              </button>
+              {candidateStock ? (
+                <p>
+                  Your basket is empty. Configure <strong>{candidateStock.ticker}</strong> above and click &quot;Add to Order&quot; to begin.
+                </p>
+              ) : suggestionsLoading ? (
+                <div className="tm-sug-loading-note">
+                  <span>Checking today&apos;s suggestions…</span>
+                </div>
+              ) : dailySuggestions && dailySuggestions.length > 0 ? (
+                <>
+                  <p>Your basket is empty. Search a stock above to add buy and sell orders together.</p>
+                  <button
+                    type="button"
+                    className="tm-btn-import-sug"
+                    onClick={async () => {
+                      const sugs = dailySuggestions ?? (await fetchDailySuggestions(allStocks));
+                      const isAlreadyDone =
+                        areSuggestionsExecutedToday() ||
+                        sugs.every(
+                          (s) => s.status === "executed" || s.is_executed === true || s.executed === true
+                        );
+                      setBasket(
+                        sugs.map((s, idx) => ({
+                          id: `item_${Date.now()}_${idx}`,
+                          ticker: s.ticker,
+                          name: s.name,
+                          price: s.price,
+                          action: s.action,
+                          quantity: s.quantity,
+                          predicted: !isAlreadyDone,
+                        }))
+                      );
+                    }}
+                  >
+                    <Zap size={13} aria-hidden="true" />
+                    <span>Load Today&apos;s Strategy Suggestions</span>
+                  </button>
+                </>
+              ) : (
+                <div className="tm-no-suggestions-note">
+                  <div className="tm-no-sug-header">
+                    <Info size={15} className="tm-no-suggestions-icon" aria-hidden="true" />
+                    <strong>No Strategy Suggestions For Today</strong>
+                  </div>
+                  <p className="tm-no-sug-message">
+                    There are no suggestions for today. Search and select a stock above to begin trading.
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <div className="tm-basket-list">

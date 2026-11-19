@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import Header from "../components/Header";
 import {
   formatCurrency,
@@ -13,6 +13,12 @@ import {
   getMaxSimulationEndDate,
   formatDateToISO,
   formatSimulationWeight,
+  MIN_SIMULATION_START_DATE,
+  getSavedSimulationParams,
+  saveSimulationParams,
+  getSavedSimulationResult,
+  inFlightSimulationPromise,
+  inFlightSimulationParams,
   type SimulationExecutionResult,
   type SimulationDailyRecord,
 } from "../utils/simulationUtils";
@@ -24,6 +30,10 @@ import {
   Calendar,
   Layers,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  Check,
 } from "lucide-react";
 import {
   Chart as ChartJS,
@@ -62,14 +72,16 @@ export default function SimulationPage() {
 
   const defaults = useMemo(() => getDefaultSimulationDates(), []);
   const maxAllowedDateStr = useMemo(() => formatDateToISO(getMaxSimulationEndDate(2)), []);
+  const savedParams = useMemo(() => getSavedSimulationParams(), []);
+  const savedResult = useMemo(() => getSavedSimulationResult(), []);
 
-  const [startDate, setStartDate] = useState(defaults.startDate);
-  const [endDate, setEndDate] = useState(defaults.endDate);
-  const [capital, setCapital] = useState<number>(defaults.defaultCapital);
-  const [modelName, setModelName] = useState<string>(defaults.defaultModel);
+  const [startDate, setStartDate] = useState(savedParams?.startDate ?? defaults.startDate);
+  const [endDate, setEndDate] = useState(savedParams?.endDate ?? defaults.endDate);
+  const [capital, setCapital] = useState<number>(savedParams?.capital ?? defaults.defaultCapital);
+  const [modelName, setModelName] = useState<string>(savedParams?.modelName ?? defaults.defaultModel);
   const [loading, setLoading] = useState<boolean>(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [result, setResult] = useState<SimulationExecutionResult | null>(null);
+  const [result, setResult] = useState<SimulationExecutionResult | null>(savedResult);
 
   // View state: "floored" (real execution) or "ideal" (theoretical fractional shares)
   const [executionTier, setExecutionTier] = useState<"floored" | "ideal">("floored");
@@ -79,6 +91,36 @@ export default function SimulationPage() {
 
   // Selected date for viewing daily stock positions (defaults to latest available)
   const [selectedDayDate, setSelectedDayDate] = useState<string>("");
+
+  // Custom dropdown state for day picker (ensures dropdown opens downwards, not upwards)
+  const [dayDropdownOpen, setDayDropdownOpen] = useState(false);
+  const dayDropdownRef = useRef<HTMLDivElement | null>(null);
+  const selectedOptionRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!dayDropdownOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dayDropdownRef.current && !dayDropdownRef.current.contains(e.target as Node)) {
+        setDayDropdownOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setDayDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+
+    if (selectedOptionRef.current) {
+      selectedOptionRef.current.scrollIntoView({ block: "nearest" });
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [dayDropdownOpen]);
 
   // Auto-recover simulation button if action times out or is cancelled
   useResetStuckAction(() => {
@@ -133,8 +175,41 @@ export default function SimulationPage() {
     }
   };
 
-  // Run initial simulation on page mount so user immediately sees results
+  // Run initial simulation or restore in-flight / cached simulation
   useEffect(() => {
+    // 1. If an in-flight simulation is already running (e.g. user started it and switched pages):
+    if (inFlightSimulationPromise && inFlightSimulationParams) {
+      setLoading(true);
+      setStartDate(inFlightSimulationParams.startDate);
+      setEndDate(inFlightSimulationParams.endDate);
+      setCapital(inFlightSimulationParams.capital);
+      setModelName(inFlightSimulationParams.modelName);
+
+      inFlightSimulationPromise
+        .then((res) => {
+          setResult(res);
+          if (res.daily && res.daily.length > 0) {
+            setSelectedDayDate(res.daily[res.daily.length - 1].date);
+          }
+        })
+        .catch((err) => {
+          setValidationError(err instanceof Error ? err.message : "Simulation failed to execute.");
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+      return;
+    }
+
+    // 2. If a result is already saved from a previous user run, DO NOT rerun with default dates!
+    if (savedResult) {
+      if (savedResult.daily && savedResult.daily.length > 0) {
+        setSelectedDayDate(savedResult.daily[savedResult.daily.length - 1].date);
+      }
+      return;
+    }
+
+    // 3. Only run initial default simulation if user has never run a simulation this session
     void executeSimulation(defaults.startDate, defaults.endDate, defaults.defaultCapital, defaults.defaultModel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -149,6 +224,57 @@ export default function SimulationPage() {
     if (!selectedDayDate) return result.daily[result.daily.length - 1];
     return result.daily.find((d) => d.date === selectedDayDate) ?? result.daily[result.daily.length - 1];
   }, [result, selectedDayDate]);
+
+  const simDateRange = useMemo(() => {
+    if (!result?.daily || result.daily.length === 0) {
+      return { min: "", max: "" };
+    }
+    return {
+      min: result.daily[0].date,
+      max: result.daily[result.daily.length - 1].date,
+    };
+  }, [result]);
+
+  const currentDayIndex = useMemo(() => {
+    if (!result?.daily || !selectedDayRecord) return -1;
+    return result.daily.findIndex((d) => d.date === selectedDayRecord.date);
+  }, [result, selectedDayRecord]);
+
+  const handlePrevDay = () => {
+    if (!result?.daily || currentDayIndex <= 0) return;
+    setSelectedDayDate(result.daily[currentDayIndex - 1].date);
+  };
+
+  const handleNextDay = () => {
+    if (!result?.daily || currentDayIndex < 0 || currentDayIndex >= result.daily.length - 1) return;
+    setSelectedDayDate(result.daily[currentDayIndex + 1].date);
+  };
+
+  const handleCalendarDayChange = (pickedDate: string) => {
+    if (!pickedDate || !result?.daily || result.daily.length === 0) return;
+
+    // Check if the picked date matches an exact trading day in simulation
+    const exactMatch = result.daily.find((d) => d.date === pickedDate);
+    if (exactMatch) {
+      setSelectedDayDate(exactMatch.date);
+      return;
+    }
+
+    // If picked date falls on a weekend or holiday, select the closest trading day in the simulation
+    const targetTime = new Date(`${pickedDate}T00:00:00`).getTime();
+    let closest = result.daily[0];
+    let minDiff = Math.abs(new Date(`${closest.date}T00:00:00`).getTime() - targetTime);
+
+    for (let i = 1; i < result.daily.length; i++) {
+      const diff = Math.abs(new Date(`${result.daily[i].date}T00:00:00`).getTime() - targetTime);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = result.daily[i];
+      }
+    }
+
+    setSelectedDayDate(closest.date);
+  };
 
   const chartData: ChartData<"line"> = useMemo(() => {
     if (!result || !result.daily || result.daily.length === 0) {
@@ -302,8 +428,13 @@ export default function SimulationPage() {
                 id="sim-start-date"
                 type="date"
                 value={startDate}
+                min={MIN_SIMULATION_START_DATE}
                 max={endDate || maxAllowedDateStr}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setStartDate(val);
+                  saveSimulationParams({ startDate: val, endDate, capital, modelName });
+                }}
                 required
               />
             </div>
@@ -314,9 +445,13 @@ export default function SimulationPage() {
                 id="sim-end-date"
                 type="date"
                 value={endDate}
-                min={startDate}
+                min={startDate || MIN_SIMULATION_START_DATE}
                 max={maxAllowedDateStr}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setEndDate(val);
+                  saveSimulationParams({ startDate, endDate: val, capital, modelName });
+                }}
                 required
               />
             </div>
@@ -331,7 +466,9 @@ export default function SimulationPage() {
                 value={capital === 0 ? "" : capital}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setCapital(val === "" ? 0 : Number(val));
+                  const num = val === "" ? 0 : Number(val);
+                  setCapital(num);
+                  saveSimulationParams({ startDate, endDate, capital: num, modelName });
                 }}
                 required
               />
@@ -339,28 +476,40 @@ export default function SimulationPage() {
                 <button
                   type="button"
                   className="simulation-preset-btn"
-                  onClick={() => setCapital(100000)}
+                  onClick={() => {
+                    setCapital(100000);
+                    saveSimulationParams({ startDate, endDate, capital: 100000, modelName });
+                  }}
                 >
                   ₹1L
                 </button>
                 <button
                   type="button"
                   className="simulation-preset-btn"
-                  onClick={() => setCapital(500000)}
+                  onClick={() => {
+                    setCapital(500000);
+                    saveSimulationParams({ startDate, endDate, capital: 500000, modelName });
+                  }}
                 >
                   ₹5L
                 </button>
                 <button
                   type="button"
                   className="simulation-preset-btn"
-                  onClick={() => setCapital(1000000)}
+                  onClick={() => {
+                    setCapital(1000000);
+                    saveSimulationParams({ startDate, endDate, capital: 1000000, modelName });
+                  }}
                 >
                   ₹10L
                 </button>
                 <button
                   type="button"
                   className="simulation-preset-btn"
-                  onClick={() => setCapital(2500000)}
+                  onClick={() => {
+                    setCapital(2500000);
+                    saveSimulationParams({ startDate, endDate, capital: 2500000, modelName });
+                  }}
                 >
                   ₹25L
                 </button>
@@ -372,7 +521,11 @@ export default function SimulationPage() {
               <select
                 id="sim-model"
                 value={modelName}
-                onChange={(e) => setModelName(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setModelName(val);
+                  saveSimulationParams({ startDate, endDate, capital, modelName: val });
+                }}
               >
                 <option value="attention_factor_longconv">attention_factor_longconv (Default)</option>
               </select>
@@ -547,18 +700,95 @@ export default function SimulationPage() {
                   </div>
 
                   <div className="simulation-day-selector">
-                    <label htmlFor="sim-day-select">Trading Date:</label>
-                    <select
-                      id="sim-day-select"
-                      value={selectedDayDate || selectedDayRecord.date}
-                      onChange={(e) => setSelectedDayDate(e.target.value)}
-                    >
-                      {result.daily.map((d) => (
-                        <option key={d.date} value={d.date}>
-                          {d.date} — {formatCurrency(d.equity_floored)} ({formatChangePercent(d.return_floored * 100)})
-                        </option>
-                      ))}
-                    </select>
+                    <div className="simulation-day-picker-item">
+                      <label htmlFor="sim-day-calendar">Calendar:</label>
+                      <div className="simulation-calendar-input-wrap">
+                        <Calendar size={14} className="simulation-calendar-icon" aria-hidden="true" />
+                        <input
+                          type="date"
+                          id="sim-day-calendar"
+                          className="simulation-calendar-picker"
+                          aria-label="Select simulation trading date from calendar"
+                          min={simDateRange.min}
+                          max={simDateRange.max}
+                          value={selectedDayRecord.date}
+                          onChange={(e) => handleCalendarDayChange(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="simulation-day-stepper" aria-label="Step day by day">
+                      <button
+                        type="button"
+                        className="simulation-step-btn"
+                        onClick={handlePrevDay}
+                        disabled={currentDayIndex <= 0}
+                        title="Previous trading day"
+                        aria-label="Previous trading day"
+                      >
+                        <ChevronLeft size={16} aria-hidden="true" />
+                      </button>
+                      <span className="simulation-day-counter" title="Current trading day index">
+                        {currentDayIndex + 1} / {result.daily.length}
+                      </span>
+                      <button
+                        type="button"
+                        className="simulation-step-btn"
+                        onClick={handleNextDay}
+                        disabled={currentDayIndex >= result.daily.length - 1}
+                        title="Next trading day"
+                        aria-label="Next trading day"
+                      >
+                        <ChevronRight size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+
+                    <div className="simulation-day-picker-item" ref={dayDropdownRef}>
+                      <label id="sim-day-select-label">Trading Day:</label>
+                      <div className="simulation-custom-select-wrap">
+                        <button
+                          type="button"
+                          id="sim-day-select"
+                          className={`simulation-custom-select-trigger ${dayDropdownOpen ? "open" : ""}`}
+                          onClick={() => setDayDropdownOpen((prev) => !prev)}
+                          aria-haspopup="listbox"
+                          aria-expanded={dayDropdownOpen}
+                          aria-labelledby="sim-day-select-label"
+                        >
+                          <span className="simulation-custom-select-label">
+                            #{currentDayIndex + 1} · {selectedDayRecord.date} — {formatCurrency(selectedDayRecord.equity_floored)} ({formatChangePercent(selectedDayRecord.return_floored * 100)})
+                          </span>
+                          <ChevronDown size={14} className={`simulation-custom-select-arrow ${dayDropdownOpen ? "open" : ""}`} aria-hidden="true" />
+                        </button>
+
+                        {dayDropdownOpen && (
+                          <div className="simulation-custom-select-dropdown" role="listbox" aria-labelledby="sim-day-select-label">
+                            {result.daily.map((d, idx) => {
+                              const isSelected = (selectedDayDate || selectedDayRecord.date) === d.date;
+                              return (
+                                <button
+                                  key={d.date}
+                                  ref={isSelected ? selectedOptionRef : null}
+                                  type="button"
+                                  className={`simulation-custom-select-option ${isSelected ? "selected" : ""}`}
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  onClick={() => {
+                                    setSelectedDayDate(d.date);
+                                    setDayDropdownOpen(false);
+                                  }}
+                                >
+                                  <span className="sim-option-text">
+                                    #{idx + 1} · {d.date} — {formatCurrency(d.equity_floored)} ({formatChangePercent(d.return_floored * 100)})
+                                  </span>
+                                  {isSelected && <Check size={14} className="sim-option-check" aria-hidden="true" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
