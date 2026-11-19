@@ -3,7 +3,9 @@ name: Daily Auto-Trade
 on:
   schedule:
     # GitHub Actions cron is UTC only. 09:15 IST (NSE market open) = 03:45 UTC.
-    - cron: "45 3 * * 1-5"
+    - cron: "30 9 * * 1-5"
+      timezone: "Asia/Kolkata"
+      
   workflow_dispatch: {}
 
 jobs:

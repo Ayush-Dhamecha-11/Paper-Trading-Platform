@@ -116,7 +116,7 @@ class HistDataFetcher:
 
         return historical_data, metadata
 
-    def fetch_ohlcv(self, db, target_date: date) -> dict | None:
+    def fetch_ohlcv(self, db, target_date: datetime) -> dict | None:
         """
         Fetch one day of OHLCV for via yfinance.
         """
@@ -236,7 +236,7 @@ class HistDataFetcher:
             db.close()
 
 
-    def migrate_daily_data(self, target_date: date) -> int:
+    def migrate_daily_data(self, target_date: datetime) -> int:
         """Fetch + upsert EOD prices for the whole universe on target_date."""
         db = SessionLocal()
         try:
