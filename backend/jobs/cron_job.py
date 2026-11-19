@@ -70,7 +70,7 @@ def run(target_date: datetime | None = None) -> None:
 
 if __name__ == "__main__":
     try:
-        run(datetime(2026, 11, 18))
+        run()
     except Exception:
         logger.exception("Daily pipeline failed")
         sys.exit(1)

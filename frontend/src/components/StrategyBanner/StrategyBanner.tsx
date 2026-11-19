@@ -200,6 +200,17 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
     [validSuggestions]
   );
 
+  const allExecuted = useMemo(() => {
+    return (
+      validSuggestions.length > 0 &&
+      validSuggestions.every(
+        (s) =>
+          s.status === "executed" &&
+          (s.is_executed === true || s.executed === true || Boolean(s.executedAt))
+      )
+    );
+  }, [validSuggestions]);
+
   if (dismissed) {
     return null;
   }
@@ -230,17 +241,6 @@ export default function StrategyBanner({ stocks }: Readonly<Props> = {}) {
   if (validSuggestions.length === 0) {
     return null;
   }
-
-  const allExecuted = useMemo(() => {
-    return (
-      validSuggestions.length > 0 &&
-      validSuggestions.every(
-        (s) =>
-          s.status === "executed" &&
-          (s.is_executed === true || s.executed === true || Boolean(s.executedAt))
-      )
-    );
-  }, [validSuggestions]);
 
   // ── Mode 1: Auto-Trade is ON AND Trades were actually executed by backend ──
   if (isAutoTradeOn && (allExecuted || isAlreadyExecuted)) {

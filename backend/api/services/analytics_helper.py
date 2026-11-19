@@ -98,8 +98,13 @@ def load_snapshots(db: Session, portfolio_id: int) -> pd.DataFrame:
 
     # daily_return may be NULL for early rows; use account equity as the return
     # base because cash is part of the trading account value.
-    pct_change = df["account_equity"].pct_change()
+    pct_change = df["account_equity"].pct_change().replace(
+        [float("inf"), float("-inf")], float("nan")
+    )
     df["daily_return"] = df["daily_return"].fillna(pct_change)
+    df["daily_return"] = df["daily_return"].replace(
+        [float("inf"), float("-inf")], float("nan")
+    )
     df.loc[df.index[0], "daily_return"] = 0.0 if pd.isna(df["daily_return"].iloc[0]) else df["daily_return"].iloc[0]
 
     return df
@@ -134,7 +139,8 @@ def load_benchmark(db: Session, start: date, end: date) -> pd.Series:
 def compute_drawdown_series(portfolio_value: pd.Series) -> pd.Series:
     """Drawdown at each point = % below the running peak so far."""
     running_max = portfolio_value.cummax()
-    return (portfolio_value - running_max) / running_max * 100
+    drawdown = (portfolio_value - running_max) / running_max.where(running_max > 0) * 100
+    return drawdown.where(running_max > 0, 0.0)
 
 
 def compute_rolling_volatility(daily_return: pd.Series, window: int = 21) -> pd.Series:
@@ -142,20 +148,49 @@ def compute_rolling_volatility(daily_return: pd.Series, window: int = 21) -> pd.
     return daily_return.rolling(window, min_periods=5).std() * math.sqrt(252) * 100
 
 
-def compute_sharpe_ratio(daily_return: pd.Series, risk_free_annual: float = 0.06) -> float:
+def compute_sharpe_ratio(
+    daily_return: pd.Series,
+    risk_free_annual: float = 0.06,
+) -> float | None:
     """Annualised Sharpe ratio from a daily return series."""
-    if daily_return.empty or daily_return.std() == 0 or daily_return.isna().all():
-        return 0.0
+    returns = daily_return.dropna()
+    if len(returns) < 2:
+        return None
+
     rf_daily = risk_free_annual / 252
-    excess = daily_return - rf_daily
-    return float((excess.mean() / excess.std()) * math.sqrt(252))
+    excess = returns - rf_daily
+    volatility = float(excess.std())
+    if not math.isfinite(volatility) or volatility <= 0:
+        return None
+
+    sharpe = float((excess.mean() / volatility) * math.sqrt(252))
+    return sharpe if math.isfinite(sharpe) else None
 
 
 def compute_max_drawdown(portfolio_value: pd.Series) -> float:
     if portfolio_value.empty:
         return 0.0
     dd = compute_drawdown_series(portfolio_value)
-    return float(dd.min())
+    dd = dd.replace([float("inf"), float("-inf")], float("nan")).dropna()
+    return float(dd.min()) if not dd.empty else 0.0
+
+
+def compute_annualized_return_pct(close_prices: pd.Series) -> float | None:
+    if (
+        len(close_prices) < 2
+        or close_prices.iloc[0] <= 0
+        or close_prices.iloc[-1] <= 0
+    ):
+        return None
+
+    periods = len(close_prices) - 1
+    total_return = close_prices.iloc[-1] / close_prices.iloc[0]
+    annualized_return_pct = (total_return ** (252 / periods) - 1) * 100
+    return (
+        float(annualized_return_pct)
+        if math.isfinite(annualized_return_pct)
+        else None
+    )
 
 
 def slice_range(df: pd.DataFrame, range_key: str, as_of: date) -> pd.DataFrame:
@@ -185,11 +220,18 @@ def build_performance_series(
     if ranged.empty:
         return []
 
+    positive_equity = ranged["account_equity"] > 0
+    if not positive_equity.any():
+        return []
+    ranged = ranged.loc[positive_equity.idxmax():]
+
     # Performance is account performance, so free cash + marked positions are
     # represented in the curve. Holdings-only portfolio value is intentionally
     # kept separate for the portfolio summary card.
     base_value = ranged["account_equity"].iloc[0]
-    portfolio_rebased = ranged["account_equity"] / base_value * 100
+    period_returns = ranged["daily_return"].copy()
+    period_returns.iloc[0] = 0.0
+    portfolio_rebased = (1 + period_returns).cumprod() * 100
 
     bench_ranged = benchmark.reindex(ranged.index, method="ffill") if not benchmark.empty else None
     if bench_ranged is not None and not bench_ranged.empty and not pd.isna(bench_ranged.iloc[0]):
@@ -198,9 +240,9 @@ def build_performance_series(
     else:
         bench_rebased = None
 
-    pnl = ranged["account_equity"] - base_value
-    drawdown = compute_drawdown_series(ranged["account_equity"])
-    volatility = compute_rolling_volatility(ranged["daily_return"])
+    pnl = (portfolio_rebased / 100 - 1) * base_value
+    drawdown = compute_drawdown_series(portfolio_rebased)
+    volatility = compute_rolling_volatility(snapshots["daily_return"]).reindex(ranged.index)
 
     label_fmt = "%d %b" if range_key in ("1W", "1M") else "%b"
 
@@ -355,35 +397,53 @@ def build_trading_metrics(trades: list[dict]) -> list[dict]:
     if not trades:
         return [
             {"label": "Win Rate", "value": "N/A", "tone": "neutral"},
-            {"label": "Average Win", "value": "₹0", "tone": "neutral"},
-            {"label": "Average Loss", "value": "₹0", "tone": "neutral"},
+            {"label": "Average Win", "value": "N/A", "tone": "neutral"},
+            {"label": "Average Loss", "value": "N/A", "tone": "neutral"},
             {"label": "Profit Factor", "value": "N/A", "tone": "neutral"},
-            {"label": "Best Trade", "value": "₹0", "tone": "neutral"},
-            {"label": "Worst Trade", "value": "₹0", "tone": "neutral"},
+            {"label": "Best Trade", "value": "N/A", "tone": "neutral"},
+            {"label": "Worst Trade", "value": "N/A", "tone": "neutral"},
         ]
 
     pnls = [t["pnl"] for t in trades]
     wins = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p <= 0]
+    losses = [p for p in pnls if p < 0]
 
     win_rate = len(wins) / len(pnls) * 100
-    avg_win = sum(wins) / len(wins) if wins else 0.0
-    avg_loss = sum(losses) / len(losses) if losses else 0.0
+    avg_win = sum(wins) / len(wins) if wins else None
+    avg_loss = sum(losses) / len(losses) if losses else None
     gross_profit = sum(wins)
     gross_loss = abs(sum(losses))
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf")
+    if gross_loss > 0:
+        profit_factor = gross_profit / gross_loss
+    elif gross_profit > 0:
+        profit_factor = float("inf")
+    else:
+        profit_factor = None
     best_trade = max(pnls)
     worst_trade = min(pnls)
+    if profit_factor is None:
+        profit_factor_value = "N/A"
+        profit_factor_tone = "neutral"
+    elif math.isinf(profit_factor):
+        profit_factor_value = "∞"
+        profit_factor_tone = "good"
+    else:
+        profit_factor_value = f"{profit_factor:.2f}"
+        profit_factor_tone = "good" if profit_factor >= 1 else "bad"
 
     return [
         {"label": "Win Rate", "value": f"{win_rate:.0f}%", "tone": "good" if win_rate >= 50 else "bad"},
-        {"label": "Average Win", "value": _format_inr(avg_win), "tone": "good"},
-        {"label": "Average Loss", "value": _format_inr(avg_loss), "tone": "bad"},
         {
-            "label": "Profit Factor",
-            "value": f"{profit_factor:.2f}" if profit_factor != float("inf") else "∞",
-            "tone": "good" if profit_factor >= 1 else "bad",
+            "label": "Average Win",
+            "value": _format_inr(avg_win) if avg_win is not None else "N/A",
+            "tone": "good" if avg_win is not None else "neutral",
         },
+        {
+            "label": "Average Loss",
+            "value": _format_inr(avg_loss) if avg_loss is not None else "N/A",
+            "tone": "bad" if avg_loss is not None else "neutral",
+        },
+        {"label": "Profit Factor", "value": profit_factor_value, "tone": profit_factor_tone},
         {"label": "Best Trade", "value": _format_inr(best_trade), "tone": "good" if best_trade >= 0 else "bad"},
         {"label": "Worst Trade", "value": _format_inr(worst_trade), "tone": "bad" if worst_trade < 0 else "good"},
     ]
@@ -544,7 +604,9 @@ def build_risk_by_stock(db: Session, positions, lookback_days: int = 90) -> list
         daily_ret = closes.pct_change().dropna()
         if daily_ret.empty:
             continue
-        underlying_return_pct = (closes.iloc[-1] / closes.iloc[0] - 1) * 100
+        underlying_return_pct = compute_annualized_return_pct(closes)
+        if underlying_return_pct is None:
+            continue
         position = next((p for p in positions if p.symbol == symbol), None)
         total_return_pct = (
             underlying_return_pct
@@ -574,7 +636,7 @@ def build_summary(
     """Build analytics summary cards from the central portfolio accounting."""
     state = build_portfolio_state(db, portfolio, positions=positions)
     portfolio_value = float(state.portfolio_value)
-    cost_base = float(state.invested_capital) if state.invested_capital > 0 else float(state.net_contributed_capital)
+    cost_base = float(state.net_contributed_capital)
     total_return_pct = (
         float(state.total_profit) / cost_base * 100
         if cost_base > 0
@@ -586,13 +648,23 @@ def build_summary(
         aligned_bench = benchmark.reindex(snapshots.index, method="ffill").dropna()
         if len(aligned_bench) >= 2:
             bench_return_pct = (aligned_bench.iloc[-1] / aligned_bench.iloc[0] - 1) * 100
-            portfolio_return_pct = (
-                snapshots["account_equity"].iloc[-1] / snapshots["account_equity"].iloc[0] - 1
-            ) * 100
+            portfolio_returns = snapshots["daily_return"].iloc[1:].dropna()
+            portfolio_return_pct = ((1 + portfolio_returns).prod() - 1) * 100
             alpha_pct = portfolio_return_pct - bench_return_pct
 
-    sharpe = compute_sharpe_ratio(snapshots["daily_return"]) if not snapshots.empty else 0.0
-    max_dd = compute_max_drawdown(snapshots["account_equity"]) if not snapshots.empty else 0.0
+    observed_returns = (
+        snapshots["daily_return"].iloc[1:]
+        if not snapshots.empty
+        else pd.Series(dtype=float)
+    )
+    sharpe = compute_sharpe_ratio(observed_returns)
+    if observed_returns.dropna().empty:
+        max_dd = None
+    else:
+        growth = (1 + observed_returns.dropna()).cumprod()
+        max_dd = compute_max_drawdown(
+            pd.concat([pd.Series([1.0]), growth], ignore_index=True)
+        )
 
     def tone(value: float) -> str:
         return "good" if value >= 0 else "bad"
@@ -602,7 +674,15 @@ def build_summary(
         {"label": "Total Return", "value": f"{total_return_pct:+.1f}%", "tone": tone(total_return_pct)},
         {"label": "Today's P&L", "value": _format_inr(float(state.today_pnl), show_plus=True), "tone": tone(float(state.today_pnl))},
         {"label": "Alpha vs NIFTY 50", "value": f"{alpha_pct:+.1f}%", "tone": tone(alpha_pct)},
-        {"label": "Sharpe Ratio", "value": f"{sharpe:.2f}", "tone": tone(sharpe)},
-        {"label": "Max Drawdown", "value": f"{max_dd:.1f}%", "tone": "bad" if max_dd < 0 else "neutral"},
+        {
+            "label": "Sharpe Ratio",
+            "value": f"{sharpe:.2f}" if sharpe is not None else "N/A",
+            "tone": tone(sharpe) if sharpe is not None else "neutral",
+        },
+        {
+            "label": "Max Drawdown",
+            "value": f"{max_dd:.1f}%" if max_dd is not None else "N/A",
+            "tone": "bad" if max_dd is not None and max_dd < 0 else "neutral",
+        },
     ]
 
