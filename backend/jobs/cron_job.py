@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def run(target_date: datetime | None = None) -> None:
-    target_date = target_date or now_ist()
+    target_date = target_date or (now_ist() - timedelta(days=1))
     
     logger.info("--- Daily CRON job starting for %s ---", target_date)
 
