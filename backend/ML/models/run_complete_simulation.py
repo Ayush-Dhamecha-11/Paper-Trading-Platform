@@ -16,9 +16,9 @@ if str(ml_dir) not in sys.path:
 
 from data_loader import DataLoader
 from train import RollingTrainer, ModelConfig
-from test_oos import OOSTester
+#from test_oos import OOSTester
 #from signature_prep import build_signature_features, plot_signature_similarity
-from show_results import show_all_oos_final_results
+#from show_results import show_all_oos_final_results
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,21 +29,23 @@ logger = logging.getLogger(__name__)
 
 # Model parameters to configure
 data_dir = "../data"
-years_to_train = 10
-years_to_validate = 3
+years_to_train = 11
+years_to_validate = 2
 years_to_test = 1
-K_list = [5]
+K_list = [15]
 md = ["learnable"]  # ["learnable", "pca"]
 proj_dim = 32
 hidden_projection_dim = 32
-lookback_length = 50
+lookback_length = 40
 epoch = 30
-learning_rate = 0.008
-weight_decay = 0.002
+learning_rate = 0.003
+weight_decay = 0.001
 lambda_var_coeff = 0.0
-lambda_ridge = 0.01
+lambda_ridge = 0.001
 lambda_squash = 0.001
 early_stop_patience = 8
+dropout = 0.0
+temperature = 0.05
 dev = "auto"
 
 # Load the data
@@ -95,19 +97,21 @@ for k in K_list:
             lambda_ridge = lambda_ridge,
             lambda_squash = lambda_squash,
             patience = early_stop_patience,
+            dropout = dropout,
+            attention_temperature = temperature,
             save_dir = f"{data_dir}/../model_results_{mdd}",
             device=dev,
             mode=mdd,
         )
 
         #Training
-        #trainer = RollingTrainer(config)
-        #trainer.run_train(X, R, splits, dates, symbols)
-        tester = OOSTester(config)
+        trainer = RollingTrainer(config)
+        trainer.run_train(X, R, splits, dates, symbols)
+        #tester = OOSTester(config)
 
         # Testing
-        results = tester.run_test(X_test, R_test, splits, dates, symbols, config)
-        final_content[f"{k}_{mdd}"] = results
+        #results = tester.run_test(X_test, R_test, splits, dates, symbols, config)
+        #final_content[f"{k}_{mdd}"] = results
 
         # Print summary table
         """print("\n" + "-" * 65)
@@ -170,4 +174,4 @@ for k in K_list:
         print(f"Saved test figure (K={k}) to {out_path}")"""
 
 
-show_all_oos_final_results(final_content)
+#show_all_oos_final_results(final_content)

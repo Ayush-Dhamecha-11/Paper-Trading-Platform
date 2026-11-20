@@ -297,6 +297,7 @@ class AttentionFactorModel(nn.Module):
         d_hidden_conv=32,
         lambda_squash=0.001,
         dropout=0.1,
+        attention_temperature=1.0,
     ):
         
         super().__init__()
@@ -307,6 +308,7 @@ class AttentionFactorModel(nn.Module):
         self.d = d
         self.s = s
         self.lambda_ridge = lambda_ridge
+        self.attention_temperature = attention_temperature
 
         # Learnable parameter 1 -- Embedding matrix W_K:
         # maps M-dimensional characteristics into d-dimensional space
@@ -549,7 +551,7 @@ class AttentionFactorModel(nn.Module):
         #print(f"omega_t:  {omega_t}\n")
         l1 = omega_t.abs().sum()
         omega_t = omega_t / (l1 + 1e-8)
-        print(f"omega_t:  {omega_port}\n")
+        #print(f"omega_t:  {omega_port}\n")
 
         # Gross profit return
         R_port_gross = torch.dot(R_curr, omega_t) # scalar
@@ -747,7 +749,7 @@ class AttentionFactorModel(nn.Module):
         mean_exp_var = torch.mean(1.0 - unexplained)
 
         # Combined loss (negative because we minimise)
-        loss = -(0.5*mean_ret_rf - 0.2*std_ret_rf + 0.0*mean_exp_var)
+        loss = -(mean_ret_rf - 0.02*std_ret_rf + lambda_var*mean_exp_var)
 
         # Diagnostics dict for logging
         info = {

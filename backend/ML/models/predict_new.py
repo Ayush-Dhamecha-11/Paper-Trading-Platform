@@ -78,10 +78,11 @@ def _load_model(
     
     # Use the shared checkpoint manager so token/repository handling and Hub
     # downloads follow the same path as the rest of the ML project.
+    token_id = os.getenv("HF_TOKEN")
     state_dict = download_checkpoint(
         filename=checkpoint_filename,
         repo_id=repo_id,
-        token= os.getenv("HF_TOKEN"),
+        token=token_id,
         device="cpu",
     )
 

@@ -90,6 +90,7 @@ class ModelConfig:
     lambda_ridge: float = 1e-2
     lambda_squash: float = 0.001
     dropout: float = 0.25
+    attention_temperature: float = 1.0
 
     # Training
     epochs: int = 30
@@ -497,7 +498,7 @@ class RollingTrainer:
         Instead of accumulating increasing numbers of local files on disk,
         it pushes directly to the cloud Hugging Face repository.
         """
-        filename = f"K{self.cfg.K}_checkpoint_{self.cfg.s}_try.pt"
+        filename = f"K{self.cfg.K}_checkpoint_{self.cfg.s}.pt"
         commit_msg = (
             f"Best checkpoint (K={self.cfg.K}, epoch={epoch}, val_loss={val_loss:.4f})"
             if val_loss is not None
