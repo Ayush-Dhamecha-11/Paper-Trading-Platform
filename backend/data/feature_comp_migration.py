@@ -432,7 +432,7 @@ def compute_for_date(target_date: date) -> tuple[int, int]:
         raw_frames = {}
         for i, symbol in enumerate(symbols):
             hist = load_price_history(db, symbol, start=window_start, end=target_date)
-            print(hist.index[-1])
+            #print(hist.index[-1])
             if hist.empty or hist.index[-1].date() != target_date:
                 logger.warning(f"{symbol}: no price row for {target_date} - skipping")
                 skipped += 1

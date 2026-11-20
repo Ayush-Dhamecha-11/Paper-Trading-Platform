@@ -34,24 +34,28 @@ def run(target_date: datetime | None = None) -> None:
     # exchange holiday, or a provider outage).
     db = SessionLocal()
     try:
-        has_prices = db.execute(
+        has_prices = len(db.execute(
             select(PriceHistory.symbol)
             .where(PriceHistory.day == target_date.date())
-            .limit(1)
-        ).first() is not None
+            .limit(82)
+        ).scalars().all())
 
-        if has_prices:
+        if has_prices == 81:
             forced = mark_to_market_all_shorts(db, target_date.date())
             logger.info("[2/5] short mark-to-market complete: %s force-closed", forced)
 
             snapshots = write_daily_snapshots(db, target_date.date())
             logger.info("[3/5] portfolio snapshots written: %s", snapshots)
+
+        elif has_prices < 81:
+            logger.warning("[2-5/5] only %s EOD prices for %s; skipping MTM/snapshots", has_prices, target_date)
         else:
             logger.info("[2-3/5] no EOD prices for %s; skipping MTM/snapshots", target_date)
+
     finally:
         db.close()
 
-    if has_prices:
+    if has_prices == 81:
         written, _ = compute_for_date(target_date.date())
         logger.info(
             "[4/5] characteristics computation complete for %s - %s rows written",
@@ -60,10 +64,15 @@ def run(target_date: datetime | None = None) -> None:
             )
     else:
         logger.info("[4/5] no characteristics generated for non-trading day %s", target_date)
-    
-    predicted = predict_next_day_portfolio(target_date.date())
-    for key in predicted.keys():
-        logger.info("[5/5] next-day portfolio prediction complete for %s - %s config", target_date, key)
+
+    if has_prices == 81:
+        logger.info("[5/5] next-day portfolio prediction starting for %s", target_date)
+        predicted = predict_next_day_portfolio(target_date.date())
+        for key in predicted.keys():
+            logger.info("[5/5] next-day portfolio prediction complete for %s - %s config", target_date, key)
+
+    else:
+        logger.info("[5/5] no next-day portfolio prediction for trading day %s", target_date)
 
     logger.info("--- Daily pipeline finished ---")
 
