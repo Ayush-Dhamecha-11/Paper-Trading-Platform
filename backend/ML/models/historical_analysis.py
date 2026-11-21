@@ -647,7 +647,7 @@ class HistoricalAnalysis:
         self.device = torch.device(config.device)
         self.repo_id = (repo_id or os.getenv("HF_REPO_ID") or "").strip()
         self.checkpoint_filename = checkpoint_filename or (
-            f"K{config.K}_checkpoint_{config.s}_try.pt"
+            f"K{config.K}_checkpoint_{config.s}.pt"
         )
         self.risk_free_daily = float(risk_free_daily)
         self.trading_days = int(trading_days)
@@ -1003,22 +1003,24 @@ class HistoricalAnalysis:
 if __name__ == "__main__":
 
     data_dir = "../data"
-    years_to_train = 10
-    years_to_validate = 3
+    years_to_train = 11
+    years_to_validate = 2
     years_to_test = 1
-    k = 5
+    k = 15
     mdd = "learnable"  # ["learnable", "pca"]
     proj_dim = 32
     hidden_projection_dim = 32
-    lookback_length = 50
+    lookback_length = 40
     epoch = 30
-    learning_rate = 0.008
-    weight_decay = 0.002
+    learning_rate = 0.003
+    weight_decay = 0.001
     lambda_var_coeff = 0.0
-    lambda_ridge = 0.01
+    lambda_ridge = 0.001
     lambda_squash = 0.001
     early_stop_patience = 8
-    dev = "auto" 
+    dropout = 0.0
+    temperature = 0.05
+    dev = "auto"
    
     # Example only. Keep these values identical to the trained checkpoint.
     config = ModelConfig(

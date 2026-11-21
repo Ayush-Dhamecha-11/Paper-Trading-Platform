@@ -436,6 +436,7 @@ class RollingTrainer:
             # Compute loss
             loss, info = model.attention_factor_loss(
                 returns_net = seq_output["returns_net"],
+                omegas = seq_output["omegas"],
                 eps_t = seq_output["eps_t"],
                 R_t = seq_output["R_t"],
                 R_f = torch.zeros(X.shape[0]-self.cfg.s, device=X.device),

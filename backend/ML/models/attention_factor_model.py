@@ -693,6 +693,7 @@ class AttentionFactorModel(nn.Module):
     def attention_factor_loss(
         self,
         returns_net: torch.Tensor,
+        omegas: torch.Tensor,
         eps_t: torch.Tensor,
         R_t: torch.Tensor,
         R_f: torch.Tensor, 
@@ -738,6 +739,9 @@ class AttentionFactorModel(nn.Module):
         # Annualized sharpe ratio
         sharpe_annual = sharpe * math.sqrt(252)
 
+        # mean turnover
+        turnover = torch.diff(omegas, dim=0).abs().sum(dim=1).mean()
+
         # Variance of R_t across time
         var_R = torch.var(R_t, dim=0, correction=1)
         
@@ -749,7 +753,7 @@ class AttentionFactorModel(nn.Module):
         mean_exp_var = torch.mean(1.0 - unexplained)
 
         # Combined loss (negative because we minimise)
-        loss = -(mean_ret_rf - 0.02*std_ret_rf + lambda_var*mean_exp_var)
+        loss = -(mean_ret_rf - 0.02*std_ret_rf - 0.002*turnover + lambda_var*mean_exp_var)
 
         # Diagnostics dict for logging
         info = {
