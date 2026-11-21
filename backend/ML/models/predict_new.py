@@ -337,20 +337,19 @@ def predict_next_day_portfolio(target_date: date | None = None) -> dict[str, Any
 
     # Model parameters to configure
     data_dir = "../data"
-    years_to_train = 8
-    years_to_validate = 2
-    years_to_test = 1
-    K_list = [3]
+    K_list = [15]
     md = ["learnable"]  # ["learnable", "pca"]
-    hidden_projection_dim = 64
+    hidden_projection_dim = 32
     lookback_length = 40
     epoch = 30
-    learning_rate = 0.005
-    weight_decay = 0.002
+    learning_rate = 0.003
+    weight_decay = 0.001
     lambda_var_coeff = 0.0
-    lambda_ridge = 0.01
+    lambda_ridge = 0.001
     lambda_squash = 0.001
-    early_stop_patience = 6
+    early_stop_patience = 8
+    dropout = 0.0
+    temperature = 0.05
     device = _get_device()
 
     metadata_ans = {}
@@ -402,6 +401,8 @@ def predict_next_day_portfolio(target_date: date | None = None) -> dict[str, Any
                     lambda_ridge = lambda_ridge,
                     lambda_squash = lambda_squash,
                     patience = early_stop_patience,
+                    dropout = dropout,
+                    attention_temperature = temperature,
                     save_dir = f"{data_dir}/../model_results_{mdd}",
                     device=device,
                     mode=mdd,
